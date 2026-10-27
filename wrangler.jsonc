@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "beqi-audit",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": { "enabled": true },
+  "vars": {
+    // Public base URL of the app; used to build the Webflow OAuth redirect URI.
+    "APP_URL": "http://localhost:8787"
+  },
+  "triggers": {
+    // Scheduler tick: starts audit runs for every site whose next_run_at is due.
+    "crons": ["0 * * * *"]
+  },
+  "services": [
+    // Self-reference service binding required by OpenNext (name must match "name" above).
+    { "binding": "WORKER_SELF_REFERENCE", "service": "beqi-audit" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "beqi-audit",
+      // Replace with the id printed by `wrangler d1 create beqi-audit`.
+      "database_id": "REPLACE_WITH_D1_ID",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    // Next.js incremental cache (OpenNext).
+    { "binding": "NEXT_INC_CACHE_R2_BUCKET", "bucket_name": "beqi-audit-opennext-cache" },
+    // Audit artifacts: page snapshots, screenshots, generated reports.
+    { "binding": "AUDIT_STORE", "bucket_name": "beqi-audit-store" }
+  ],
+  "browser": {
+    // Browser Rendering, used for screenshots and rendered-DOM checks.
+    "binding": "BROWSER"
+  },
+  "workflows": [
+    {
+      "binding": "AUDIT_RUN",
+      "name": "beqi-audit-run",
+      "class_name": "AuditRunWorkflow"
+    }
+  ],
+  "images": { "binding": "IMAGES" }
+}

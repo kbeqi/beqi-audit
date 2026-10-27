@@ -1,0 +1,16 @@
+# Copy to .dev.vars for local development. In production set these with
+# `wrangler secret put <NAME>`.
+
+# Webflow OAuth app (Webflow dashboard -> Apps & integrations -> Build an app)
+# Redirect URI must be: <APP_URL>/api/webflow/callback
+WEBFLOW_CLIENT_ID=
+WEBFLOW_CLIENT_SECRET=
+
+# Optional. Raises the PageSpeed Insights quota; works without a key at low volume.
+PSI_API_KEY=
+
+# Optional. Enables the fix-proposal agent (phase 5).
+ANTHROPIC_API_KEY=
+
+# Overrides the wrangler.jsonc var in local dev when using `next dev` (port 3000).
+APP_URL=http://localhost:3000

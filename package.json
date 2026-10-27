@@ -5,22 +5,39 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "cf:build": "opennextjs-cloudflare build",
+    "preview": "opennextjs-cloudflare build && wrangler dev",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply beqi-audit --local",
+    "db:migrate:remote": "wrangler d1 migrations apply beqi-audit --remote",
+    "smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=.wrangler/tmp/smoke.mjs --log-level=warning && node .wrangler/tmp/smoke.mjs"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.4.0",
+    "domutils": "^4.0.2",
+    "drizzle-orm": "^0.45.4",
+    "htmlparser2": "^12.0.0",
     "next": "16.4.3",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261027.1",
+    "@opennextjs/cloudflare": "^1.20.13",
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.154.0"
   }
 }
