@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "beqi-audit",
+  // "beqi-audit" is already taken by the public Site Check widget Worker on beqi.co.
+  "name": "beqi-audit-app",
   "main": "./worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -19,14 +20,13 @@
   },
   "services": [
     // Self-reference service binding required by OpenNext (name must match "name" above).
-    { "binding": "WORKER_SELF_REFERENCE", "service": "beqi-audit" }
+    { "binding": "WORKER_SELF_REFERENCE", "service": "beqi-audit-app" }
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "beqi-audit",
-      // Replace with the id printed by `wrangler d1 create beqi-audit`.
-      "database_id": "REPLACE_WITH_D1_ID",
+      "database_id": "6bbcddcb-987a-4129-bdfd-7d980d44c939",
       "migrations_dir": "drizzle"
     }
   ],

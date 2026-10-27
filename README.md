@@ -33,17 +33,24 @@ npm run smoke -- http://localhost:8099 30
 
 ## First deploy
 
-```bash
-npx wrangler login
-npx wrangler d1 create beqi-audit          # paste database_id into wrangler.jsonc
-npx wrangler r2 bucket create beqi-audit-opennext-cache
-npx wrangler r2 bucket create beqi-audit-store
-npm run db:migrate:remote
-npx wrangler secret put WEBFLOW_CLIENT_ID
-npx wrangler secret put WEBFLOW_CLIENT_SECRET
-npx wrangler secret put PSI_API_KEY        # optional
-npm run deploy
-```
+Already done on the Beqi Cloudflare account (27 Oct 2026): the D1 database `beqi-audit` (id in `wrangler.jsonc`) exists with migration `0000` applied. The Worker is named `beqi-audit-app` because `beqi-audit` is the public Site Check widget Worker.
+
+Still needed, in order:
+
+1. Enable R2 once in the Cloudflare dashboard (R2 → Get started; it asks for a payment method even on the free tier). Then:
+   ```bash
+   npx wrangler login
+   npx wrangler r2 bucket create beqi-audit-opennext-cache
+   npx wrangler r2 bucket create beqi-audit-store
+   ```
+2. Secrets and deploy:
+   ```bash
+   npx wrangler secret put WEBFLOW_CLIENT_ID
+   npx wrangler secret put WEBFLOW_CLIENT_SECRET
+   npx wrangler secret put PSI_API_KEY        # optional
+   npm run deploy
+   ```
+3. Later schema changes: `npm run db:generate` then `npm run db:migrate:remote` (the `d1_migrations` table already records `0000`).
 
 Then set `APP_URL` in `wrangler.jsonc` to the deployed URL (or custom domain), add `<APP_URL>/api/webflow/callback` as the redirect URI on the Webflow app, and redeploy.
 
