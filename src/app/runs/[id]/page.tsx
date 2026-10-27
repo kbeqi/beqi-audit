@@ -2,7 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { runDetail } from "@/lib/queries";
 import { FindingsList } from "@/components/findings";
-import { Card, ScoreBadge, StatusPill, fmtDate } from "@/components/ui";
+import { LiveLog } from "@/components/live-log";
+import { Markdown } from "@/components/markdown";
+import { ProposalRow } from "@/components/proposals";
+import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, fmtCost, fmtDate, fmtDuration, fmtNumber } from "@/components/ui";
 import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
@@ -11,61 +14,118 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
   const { id } = await params;
   const data = await runDetail(id);
   if (!data) notFound();
-  const { run, site, findings, stateByFp } = data;
-  const inProgress = run.status === "queued" || run.status === "running";
+  const { run, site, client, findings, stateByFp, proposals, events } = data;
+  const live = run.status === "queued" || run.status === "running";
   const visible = findings.filter((f) => {
     const s = stateByFp.get(f.fingerprint);
     return !(s && (s.status === "ignored" || s.status === "false_positive"));
   });
-  const newCount = findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === run.id).length;
+  const newFps = new Set(findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === run.id).map((f) => f.fingerprint));
+  const sevTotal = run.summary ? Object.values(run.summary.findingsBySeverity).reduce((a, b) => a + b, 0) : 0;
+  const openProposals = proposals.filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying");
 
   return (
     <div className="space-y-6">
-      {inProgress && <meta httpEquiv="refresh" content="10" />}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-xs text-zinc-500">
-            <Link href={`/sites/${site.id}`} className="hover:underline">
-              {site.name}
-            </Link>
-          </div>
-          <h1 className="text-xl font-semibold">Audit run · {fmtDate(run.createdAt)}</h1>
-          <div className="mt-1 flex items-center gap-2 text-sm text-zinc-600">
-            <StatusPill status={run.status} /> <span>{run.trigger}</span>
-            {run.finishedAt && <span>· finished {fmtDate(run.finishedAt)}</span>}
-            {run.workflowInstanceId && <span className="font-mono text-xs">· workflow {run.workflowInstanceId}</span>}
-          </div>
-        </div>
-        <ScoreBadge score={run.scoreOverall} size="lg" />
-      </div>
+      <Crumbs items={[{ href: "/runs", label: "Audits" }, ...(client ? [{ href: `/clients/${client.id}`, label: client.name }] : []), { href: `/sites/${site.id}`, label: site.name }, { label: fmtDate(run.createdAt) }]} />
+      <PageHeader
+        eyebrow={
+          <span className="inline-flex items-center gap-2">
+            <StatusPill status={run.status} />
+            <span>{run.trigger} audit</span>
+            {run.model && <span className="font-mono">{run.model}</span>}
+          </span>
+        }
+        title={site.name}
+        description={run.finishedAt ? `Finished ${fmtDate(run.finishedAt)} · ${fmtDuration(run.usage?.durationMs)}` : `Started ${fmtDate(run.startedAt ?? run.createdAt)}`}
+        actions={run.status === "complete" ? <ScoreRing score={run.scoreOverall} size="lg" /> : undefined}
+      />
 
-      {run.error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">Run failed: {run.error}</div>}
-      {inProgress && <div className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-800">Audit in progress. This page refreshes every 10 seconds.</div>}
+      {run.error && <Notice tone="critical">Audit failed: {run.error}</Notice>}
+      {live && <Notice tone="accent">Claude is auditing the site through Webflow&apos;s MCP server and the live URL. This page updates as it works.</Notice>}
 
-      {run.summary && (
-        <div className="grid gap-3 md:grid-cols-6">
-          {CATEGORY_ORDER.map((cat) => (
-            <Card key={cat} className="flex items-center justify-between !p-3">
-              <div>
-                <div className="text-xs text-zinc-500">{CATEGORY_LABELS[cat]}</div>
-                <div className="text-xs text-zinc-500">{run.summary!.findingsByCategory[cat] ?? 0} findings</div>
+      <Card>
+        <CardHeader title="Agent activity" description={live ? "Live" : `${events.length} events`} />
+        <LiveLog streamId={run.id} initial={events} live={live} compact={!live} />
+      </Card>
+
+      {run.status === "complete" && run.summary && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile label="Pages reviewed" value={<span className="num">{run.summary.pagesReviewed}</span>} hint={`of ${run.summary.pagesTotal} static pages`} />
+            <StatTile label="Findings" value={<span className="num">{sevTotal}</span>} hint={`${run.summary.findingsBySeverity.critical} critical · ${run.summary.findingsBySeverity.high} high · ${run.summary.findingsBySeverity.medium} medium`} />
+            <StatTile label="Changes since last audit" value={<span className="num">{run.summary.newFindings}</span>} hint={`new · ${run.summary.resolvedFindings} resolved`} />
+            <StatTile label="Cost" value={fmtCost(run.usage?.estimatedCostUsd)} hint={run.usage ? `${fmtNumber(run.usage.inputTokens + run.usage.cacheReadTokens)} in · ${fmtNumber(run.usage.outputTokens)} out · ${run.usage.toolCalls} tool calls` : undefined} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {CATEGORY_ORDER.map((cat) => (
+              <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
+                <div className="text-xs font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
+                <div className="mt-1 flex items-end justify-between">
+                  <div className="text-2xl font-semibold leading-none text-ink">{run.scores?.[cat] ?? "–"}</div>
+                  <div className="text-xs text-ink-3 num">{run.summary!.findingsByCategory[cat] ?? 0}</div>
+                </div>
               </div>
-              <ScoreBadge score={run.scores?.[cat]} />
+            ))}
+          </div>
+
+          {run.agentSummary && (
+            <Card>
+              <CardHeader title="Claude's summary" />
+              <div className="grid gap-5 p-5 lg:grid-cols-[1fr_18rem]">
+                <Markdown text={run.agentSummary} />
+                {run.highlights && run.highlights.length > 0 && (
+                  <div className="rounded-lg bg-surface-2 p-4">
+                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Highlights</div>
+                    <ul className="space-y-1.5 text-sm text-ink-2">
+                      {run.highlights.map((h, i) => (
+                        <li key={i} className="flex gap-2">
+                          <span aria-hidden className="text-accent">
+                            ▸
+                          </span>
+                          <span>{h}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </Card>
-          ))}
+          )}
+
+          {openProposals.length > 0 && (
+            <Card>
+              <CardHeader title="Fixes proposed in this audit" count={openProposals.length} />
+              <ul className="divide-y divide-line">
+                {openProposals.map((p) => (
+                  <ProposalRow key={p.id} proposal={p} back={`/runs/${run.id}`} />
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader title="Findings" count={visible.length} />
+            <FindingsList findings={visible} siteId={site.id} baseUrl={site.baseUrl} back={`/runs/${run.id}`} proposals={proposals} newFingerprints={newFps} showIgnored />
+          </Card>
+        </>
+      )}
+
+      <Card>
+        <CardHeader title="Run details" />
+        <div className="p-5">
+          <KeyValue
+            items={[
+              { k: "Run id", v: <span className="font-mono text-xs">{run.id}</span> },
+              { k: "Workflow", v: <span className="font-mono text-xs">{run.workflowInstanceId ?? "inline"}</span> },
+              { k: "Site", v: <Link href={`/sites/${site.id}`} className="text-accent hover:underline">{site.name}</Link> },
+              { k: "Model", v: run.model ?? "—" },
+              { k: "API calls", v: run.usage?.apiCalls ?? "—" },
+              { k: "Web fetches", v: run.usage?.webFetches ?? "—" },
+            ]}
+          />
         </div>
-      )}
-
-      {run.summary && (
-        <Card className="text-sm text-zinc-700">
-          {run.summary.pagesCrawled} pages crawled · {run.summary.findingsBySeverity.critical} critical, {run.summary.findingsBySeverity.high} high, {run.summary.findingsBySeverity.medium} medium, {run.summary.findingsBySeverity.low} low, {run.summary.findingsBySeverity.info} info · {newCount} first seen in this run · {run.summary.resolvedFindings} resolved
-        </Card>
-      )}
-
-      <section>
-        <h2 className="mb-2 text-base font-semibold">Findings</h2>
-        <FindingsList findings={visible} siteId={site.id} baseUrl={site.baseUrl} back={`/runs/${run.id}`} showIgnored />
-      </section>
+      </Card>
     </div>
   );
 }

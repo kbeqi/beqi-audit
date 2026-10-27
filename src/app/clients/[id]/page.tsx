@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { clientDetail } from "@/lib/queries";
-import { runNow } from "@/app/actions";
-import { Card, Delta, ScoreBadge, buttonCls, buttonSecondaryCls, fmtDate } from "@/components/ui";
+import { disconnectWorkspace, runNow, updateClient } from "@/app/actions";
+import { Card, CardHeader, CountPill, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnDanger, btnPrimary, btnSecondary, btnSm, fmtDay, hostOf, inputCls, labelCls, timeAgo } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ connected?: string }> }) {
+export default async function ClientPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ connected?: string; error?: string }> }) {
   const { id } = await params;
-  const { connected } = await searchParams;
+  const { connected, error } = await searchParams;
   const data = await clientDetail(id);
   if (!data) notFound();
   const { client, sites, connections } = data;
@@ -16,78 +16,138 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">{client.name}</h1>
-          {client.notes && <p className="mt-1 max-w-2xl text-sm text-zinc-600 whitespace-pre-line">{client.notes}</p>}
-        </div>
-        <Link href={`/api/webflow/authorize?client=${client.id}`} className={active.length ? buttonSecondaryCls : buttonCls}>
-          {active.length ? "Connect another workspace" : "Connect Webflow"}
-        </Link>
-      </div>
+      <Crumbs items={[{ href: "/clients", label: "Clients" }, { label: client.name }]} />
+      <PageHeader
+        title={client.name}
+        description={client.notes ? <span className="whitespace-pre-line">{client.notes}</span> : undefined}
+        actions={
+          // A plain anchor: Next's <Link> would prefetch this route and start an OAuth flow.
+          <a href={`/api/webflow/authorize?client=${client.id}`} className={active.length ? btnSecondary : btnPrimary}>
+            {active.length ? "Connect another workspace" : "Connect Webflow"}
+          </a>
+        }
+      />
 
-      {connected && <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Connected. {connected} site(s) imported; the first weekly audit is scheduled. Run one now from a site row to see results today.</div>}
-
-      <Card>
-        <h2 className="mb-2 text-sm font-semibold">Webflow connections</h2>
-        {active.length === 0 ? (
-          <p className="text-sm text-zinc-500">Not connected. The client (or you, logged into their workspace) authorizes the Beqi app once per workspace.</p>
-        ) : (
-          <ul className="space-y-1 text-sm text-zinc-700">
-            {active.map((c) => (
-              <li key={c.id}>
-                Workspace {c.workspaceName ?? c.workspaceId ?? "—"} · {c.authorizedSiteIds.length} site(s) · authorized by {c.authorizedBy ?? "—"} on {fmtDate(c.createdAt)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+      {connected && (
+        <Notice tone="good">
+          Connected. {connected} site{connected === "1" ? "" : "s"} imported and scheduled for a weekly audit. Run one now from a site row to see results today.
+        </Notice>
+      )}
+      {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
 
       <Card>
-        <h2 className="mb-2 text-sm font-semibold">Sites</h2>
+        <CardHeader title="Sites" count={sites.length} />
         {sites.length === 0 ? (
-          <p className="text-sm text-zinc-500">No sites yet. Sites are imported automatically when a workspace is connected.</p>
+          <EmptyState title="No sites yet" body="Sites are imported automatically when a workspace is connected." />
         ) : (
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="py-1 pr-3">Site</th>
-                <th className="py-1 pr-3">Score</th>
-                <th className="py-1 pr-3">Trend</th>
-                <th className="py-1 pr-3">Schedule</th>
-                <th className="py-1 pr-3">Last audit</th>
-                <th className="py-1 pr-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sites.map((s) => (
-                <tr key={s.site.id} className="border-t border-zinc-100">
-                  <td className="py-2 pr-3">
-                    <Link href={`/sites/${s.site.id}`} className="font-medium hover:underline">
-                      {s.site.name}
-                    </Link>
-                    <div className="text-xs text-zinc-500">{s.site.baseUrl}</div>
-                  </td>
-                  <td className="py-2 pr-3">
-                    <ScoreBadge score={s.latest?.scoreOverall} />
-                  </td>
-                  <td className="py-2 pr-3">
-                    <Delta now={s.latest?.scoreOverall} before={s.previous?.scoreOverall} />
-                  </td>
-                  <td className="py-2 pr-3 text-zinc-600">{s.site.auditFrequency}</td>
-                  <td className="py-2 pr-3 text-zinc-600">{fmtDate(s.latest?.finishedAt)}</td>
-                  <td className="py-2 pr-3 text-right">
-                    <form action={runNow}>
-                      <input type="hidden" name="siteId" value={s.site.id} />
-                      <button className={buttonSecondaryCls}>Run now</button>
-                    </form>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="data-table w-full text-sm">
+              <thead>
+                <tr>
+                  <th>Site</th>
+                  <th>Score</th>
+                  <th>Trend</th>
+                  <th>Open issues</th>
+                  <th>Schedule</th>
+                  <th>Last audit</th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sites.map((s) => (
+                  <tr key={s.site.id}>
+                    <td>
+                      <Link href={`/sites/${s.site.id}`} className="font-medium text-ink hover:underline">
+                        {s.site.name}
+                      </Link>
+                      <div className="text-xs text-ink-3">{hostOf(s.site.baseUrl)}</div>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-2">
+                        <ScoreRing score={s.latest?.scoreOverall} size="sm" />
+                        <Delta now={s.latest?.scoreOverall} before={s.previous?.scoreOverall} />
+                      </div>
+                    </td>
+                    <td>
+                      <Sparkline values={s.history} />
+                    </td>
+                    <td>
+                      <div className="flex flex-wrap gap-1">
+                        <CountPill n={s.openBySeverity.critical} tone="critical" label="critical" />
+                        <CountPill n={s.openBySeverity.high} tone="serious" label="high" />
+                        <CountPill n={s.openBySeverity.medium} tone="warn" label="medium" />
+                        {s.latest && s.openFindings === 0 && <span className="text-xs text-good">Clean</span>}
+                      </div>
+                    </td>
+                    <td className="text-ink-2">
+                      {s.site.auditFrequency === "off" ? "manual" : `${s.site.auditFrequency} · ${fmtDay(s.site.nextRunAt)}`}
+                    </td>
+                    <td className="whitespace-nowrap text-ink-2">{s.running ? <StatusPill status="running" /> : timeAgo(s.latest?.finishedAt)}</td>
+                    <td className="text-right">
+                      <form action={runNow}>
+                        <input type="hidden" name="siteId" value={s.site.id} />
+                        <button className={`${btnSecondary} ${btnSm}`} disabled={!s.site.connectionId || s.running}>
+                          Audit now
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card>
+          <CardHeader title="Webflow connections" description="Authorized through Webflow's MCP server, once per workspace" />
+          {connections.length === 0 ? (
+            <EmptyState title="Not connected" body="A Beqi team member with access to the client's workspace authorizes it once. No Webflow app install is needed." />
+          ) : (
+            <ul className="divide-y divide-line">
+              {connections.map((c) => (
+                <li key={c.id} className="flex items-start justify-between gap-3 px-5 py-3 text-sm">
+                  <div className="min-w-0">
+                    <div className="font-medium text-ink">{c.label ?? c.workspaceName ?? "Workspace"}</div>
+                    <div className="text-xs text-ink-3">
+                      {c.authorizedSiteIds.length} site{c.authorizedSiteIds.length === 1 ? "" : "s"} · by {c.authorizedBy ?? "—"} · {fmtDay(c.createdAt)}
+                      {c.revokedAt ? ` · disconnected ${fmtDay(c.revokedAt)}` : c.expiresAt ? ` · token renews automatically` : ""}
+                    </div>
+                  </div>
+                  {!c.revokedAt && (
+                    <form action={disconnectWorkspace}>
+                      <input type="hidden" name="connectionId" value={c.id} />
+                      <input type="hidden" name="clientId" value={client.id} />
+                      <button className={`${btnDanger} ${btnSm}`}>Disconnect</button>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader title="Client details" />
+          <form action={updateClient} className="space-y-3 p-5">
+            <input type="hidden" name="clientId" value={client.id} />
+            <div>
+              <label htmlFor="name" className={labelCls}>
+                Name
+              </label>
+              <input id="name" name="name" defaultValue={client.name} required className={inputCls} />
+            </div>
+            <div>
+              <label htmlFor="notes" className={labelCls}>
+                Notes
+              </label>
+              <textarea id="notes" name="notes" rows={3} defaultValue={client.notes ?? ""} className={inputCls} />
+            </div>
+            <button className={btnSecondary}>Save</button>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 }

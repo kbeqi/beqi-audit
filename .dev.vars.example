@@ -1,16 +1,10 @@
-# Copy to .dev.vars for local development. In production set these with
-# `wrangler secret put <NAME>`.
+# Copy to .dev.vars for local development. In production set secrets with
+# `wrangler secret put <NAME>`; plain vars live in wrangler.jsonc.
 
-# Webflow OAuth app (Webflow dashboard -> Apps & integrations -> Build an app)
-# Redirect URI must be: <APP_URL>/api/webflow/callback
-WEBFLOW_CLIENT_ID=
-WEBFLOW_CLIENT_SECRET=
-
-# Optional. Raises the PageSpeed Insights quota; works without a key at low volume.
-PSI_API_KEY=
-
-# Optional. Enables the fix-proposal agent (phase 5).
+# Required. The audit and fix agents run on Claude through the Anthropic API.
 ANTHROPIC_API_KEY=
 
-# Overrides the wrangler.jsonc var in local dev when using `next dev` (port 3000).
+# Overrides the wrangler.jsonc vars in local dev.
 APP_URL=http://localhost:3000
+WEBFLOW_MCP_URL=https://mcp.webflow.com/mcp
+AUTH_MODE=open

@@ -3,9 +3,15 @@ import { dbFromEnv, schema } from "@/db";
 import type { AuditFrequency, RunTrigger } from "@/db/schema";
 import { newId, nowIso } from "@/lib/id";
 import { runAuditInline } from "./runner";
+import { applyProposal } from "./fixer";
 
-export interface AuditWorkflowParams {
-  runId: string;
+export type AuditWorkflowParams = { kind: "audit"; runId: string } | { kind: "fix"; proposalId: string };
+
+type WorkflowBinding = { create(opts: { id: string; params: AuditWorkflowParams }): Promise<{ id: string }> };
+
+function workflowBinding(env: CloudflareEnv): WorkflowBinding | null {
+  const wf = env.AUDIT_RUN as unknown as WorkflowBinding | undefined;
+  return wf && typeof wf.create === "function" ? wf : null;
 }
 
 // Creates the run row and hands it to the Workflow. Falls back to running the
@@ -20,10 +26,10 @@ export async function startRun(
   const runId = newId();
   await db.insert(schema.runs).values({ id: runId, siteId, trigger, status: "queued" });
 
-  const workflow = env.AUDIT_RUN as Workflow<AuditWorkflowParams> | undefined;
-  if (workflow && typeof workflow.create === "function") {
+  const workflow = workflowBinding(env);
+  if (workflow) {
     try {
-      const instance = await workflow.create({ id: runId, params: { runId } });
+      const instance = await workflow.create({ id: runId, params: { kind: "audit", runId } });
       await db.update(schema.runs).set({ workflowInstanceId: instance.id }).where(eq(schema.runs.id, runId));
       return { runId, mode: "workflow" };
     } catch (e) {
@@ -34,6 +40,23 @@ export async function startRun(
   if (waitUntil) waitUntil(p);
   else await p;
   return { runId, mode: "inline" };
+}
+
+// Applies an approved proposal via the Workflow (or inline locally).
+export async function startFix(env: CloudflareEnv, proposalId: string, waitUntil?: (p: Promise<unknown>) => void): Promise<{ mode: "workflow" | "inline" }> {
+  const workflow = workflowBinding(env);
+  if (workflow) {
+    try {
+      await workflow.create({ id: `fix-${proposalId}-${Date.now().toString(36)}`, params: { kind: "fix", proposalId } });
+      return { mode: "workflow" };
+    } catch (e) {
+      console.warn("workflow.create failed, applying inline:", (e as Error).message);
+    }
+  }
+  const p = applyProposal(env, proposalId).catch((e) => console.error("inline fix failed", e));
+  if (waitUntil) waitUntil(p);
+  else await p;
+  return { mode: "inline" };
 }
 
 export function nextRunAfter(freq: AuditFrequency, from = new Date()): string | null {

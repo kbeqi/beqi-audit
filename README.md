@@ -1,62 +1,33 @@
 # Beqi Audit
 
-Scheduled audits of Beqi's client Webflow sites: SEO, AEO/GEO, performance, broken links, unused CSS and scripts, and naming hygiene, with a portfolio dashboard and per-site findings. Runs on Cloudflare (Workers, D1, KV, Workflows, cron triggers).
+Claude audits Beqi's client Webflow sites on a schedule, proposes fixes, and applies the ones you approve. Runs on Cloudflare (Workers, D1, KV, Workflows, cron) and talks to Webflow through Webflow's hosted MCP server.
 
 ## How it works
 
-1. Add a client, then **Connect Webflow**: the client (or you, in their workspace) authorizes Beqi's OAuth app once per workspace. Every authorized site is imported, scheduled weekly, and gets a `site_publish` webhook.
-2. The hourly cron starts a Workflow for every site that is due. A run: pulls pages, scripts and custom code from the Webflow Data API → crawls the published site → checks every link → runs PageSpeed Insights on the key pages → runs all checks → scores, diffs against the previous run, and records finding lifecycle (new / still open / fixed).
-3. The dashboard shows each site's score, trend and open issues; the site page shows category scores, PageSpeed metrics, open findings (ignore / not-an-issue), run history and settings.
+1. Add a client, then **Connect Webflow**: a Beqi team member authorizes the app against Webflow's MCP server once per workspace (OAuth; no Webflow Marketplace app). Every site in the workspace is imported and scheduled weekly.
+2. The hourly cron starts a Workflow for every site that is due. Claude reads the site through Webflow's data tools (pages, SEO, schema, scripts, assets, sitemap flags) and the live URL, works through a fixed catalog of checks, and writes a report. The report is validated into findings and fix proposals, scored, and diffed against the previous audit (new / still open / resolved).
+3. The dashboard shows each site's score, trend and open issues; the site page shows Claude's summary, open findings, and proposed fixes. **Approve & apply** hands one proposal to the fix agent, which reads the current value, writes the change, reads it back, and reports. Changes to page settings, schema and code go live on the site's next publish.
 
 ## Local development
 
 ```bash
-cp .dev.vars.example .dev.vars        # fill in Webflow OAuth credentials
+cp .dev.vars.example .dev.vars        # add ANTHROPIC_API_KEY
 npm install
 npm run db:migrate:local
-npm run dev                           # http://localhost:3000, audits run inline
+npm run preview                       # http://localhost:8787 (Workflows + cron)
+# or: npm run dev                     # http://localhost:3000 (audits run inline)
 ```
 
-For the production-like path (Workflows + cron):
+## Deploy
 
 ```bash
-npm run preview                       # http://localhost:8787
-curl "http://localhost:8787/__scheduled?cron=0+*+*+*+*"   # fire the scheduler
-```
-
-Try the checks without any credentials:
-
-```bash
-node scripts/fixture-server.mjs 8099 &
-npm run smoke -- http://localhost:8099 30
-```
-
-## First deploy
-
-Already done on the Beqi Cloudflare account (27 Oct 2026): the D1 database `beqi-audit` exists with migration `0000` applied, and the two KV namespaces (`beqi-audit-opennext-cache`, `beqi-audit-store`) exist; their ids are in `wrangler.jsonc`. The Worker is named `beqi-audit-app` because `beqi-audit` is the public Site Check widget Worker.
-
-Still needed:
-
-```bash
-npx wrangler login
-npx wrangler secret put WEBFLOW_CLIENT_ID
-npx wrangler secret put WEBFLOW_CLIENT_SECRET
-npx wrangler secret put PSI_API_KEY        # optional
+npx wrangler secret put ANTHROPIC_API_KEY
+npm run db:migrate:remote             # when drizzle/ changed
 npm run deploy
 ```
 
-Later schema changes: `npm run db:generate` then `npm run db:migrate:remote` (the `d1_migrations` table already records `0000`).
-
-Then set `APP_URL` in `wrangler.jsonc` to the deployed URL (or custom domain), add `<APP_URL>/api/webflow/callback` as the redirect URI on the Webflow app, and redeploy.
+The Worker is `beqi-audit-app` (`beqi-audit` is the public Site Check widget). `APP_URL` in `wrangler.jsonc` must be the deployed URL: the Webflow MCP OAuth redirect URI is `<APP_URL>/api/webflow/callback`.
 
 ### Protect it with Cloudflare Access
 
-The app has no login of its own. In Zero Trust → Access → Applications, add a self-hosted application for the Worker's hostname with a policy that allows Beqi emails. Access injects `cf-access-authenticated-user-email`, which the app records as the actor on every action. Exclude `/api/webhooks/*` from the Access policy (Webflow must reach it; the request is HMAC-verified with the OAuth client secret).
-
-### Webflow app
-
-Create an app in the Webflow dashboard (Apps & integrations → Build an app) with the scopes listed in `src/lib/webflow/oauth.ts` and the redirect URI above. Clients authorize it per workspace; the app only needs the Data API, so no Designer extension is required.
-
-## Roadmap
-
-See the plan document for phases. Next up: Browser Rendering screenshots and visual diff, Analyze/AEO reports for Enterprise sites, scheduled PDF reports, and the approval-gated fix agent via the Webflow MCP server.
+The app has no login of its own. In Zero Trust → Access → Applications, add a self-hosted application for the Worker's hostname with a policy that allows Beqi emails, then set `AUTH_MODE` to `access` in `wrangler.jsonc` and redeploy. Until then `AUTH_MODE=open` serves everyone and the UI shows a warning banner.

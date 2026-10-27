@@ -11,8 +11,15 @@
   },
   "observability": { "enabled": true },
   "vars": {
-    // Public base URL of the app; used to build the Webflow OAuth redirect URI.
-    "APP_URL": "https://beqi-audit-app.kreshnik.workers.dev"
+    // Public base URL of the app; used to build the Webflow MCP OAuth redirect URI.
+    "APP_URL": "https://beqi-audit-app.kreshnik.workers.dev",
+    // Webflow's hosted MCP server. Claude (via the Anthropic MCP connector) and the
+    // app's own site import both talk to it with the per-workspace OAuth token.
+    "WEBFLOW_MCP_URL": "https://mcp.webflow.com/mcp",
+    // "access": only requests carrying Cloudflare Access's identity header are
+    // served (fail closed). "open": no login; use only while Access is not yet in
+    // front of the Worker. The UI shows a warning banner in open mode.
+    "AUTH_MODE": "open"
   },
   "triggers": {
     // Scheduler tick: starts audit runs for every site whose next_run_at is due.
@@ -37,16 +44,12 @@
     // Move to R2 once it is enabled on the account if screenshots/PDF reports are added.
     { "binding": "AUDIT_STORE", "id": "92fd1948a9174dfd863e15f09eec6543" }
   ],
-  "browser": {
-    // Browser Rendering, used for screenshots and rendered-DOM checks.
-    "binding": "BROWSER"
-  },
   "workflows": [
     {
+      // Runs audits and approved fixes (see src/audit/workflow.ts).
       "binding": "AUDIT_RUN",
       "name": "beqi-audit-run",
       "class_name": "AuditRunWorkflow"
     }
-  ],
-  "images": { "binding": "IMAGES" }
+  ]
 }
