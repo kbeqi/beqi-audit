@@ -30,11 +30,12 @@
       "migrations_dir": "drizzle"
     }
   ],
-  "r2_buckets": [
+  "kv_namespaces": [
     // Next.js incremental cache (OpenNext).
-    { "binding": "NEXT_INC_CACHE_R2_BUCKET", "bucket_name": "beqi-audit-opennext-cache" },
-    // Audit artifacts: page snapshots, screenshots, generated reports.
-    { "binding": "AUDIT_STORE", "bucket_name": "beqi-audit-store" }
+    { "binding": "NEXT_INC_CACHE_KV", "id": "fe5ad175e469408482e53a5835071867" },
+    // Audit artifacts: per-run crawl/link/PageSpeed JSON (see src/audit/store.ts).
+    // Move to R2 once it is enabled on the account if screenshots/PDF reports are added.
+    { "binding": "AUDIT_STORE", "id": "92fd1948a9174dfd863e15f09eec6543" }
   ],
   "browser": {
     // Browser Rendering, used for screenshots and rendered-DOM checks.

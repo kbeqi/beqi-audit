@@ -1,6 +1,6 @@
 // The audit pipeline as independent steps. The Workflow (production) and the
 // inline runner (local dev / fallback) both call these in order; each step
-// re-reads what it needs from D1 and R2 so it can be retried on its own.
+// re-reads what it needs from D1 and KV so it can be retried on its own.
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { dbFromEnv, schema } from "@/db";

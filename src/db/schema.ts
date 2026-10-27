@@ -196,7 +196,7 @@ export const pageMetrics = sqliteTable(
 
 export type SnapshotKind = "pages" | "scripts" | "custom_code" | "css_classes" | "crawl";
 
-// Per-run snapshots stored in R2; `hash` lets the next run detect changes cheaply.
+// Per-run snapshots stored in the artifact store (KV today; column name kept for R2); `hash` lets the next run detect changes cheaply.
 export const snapshots = sqliteTable(
   "snapshots",
   {
