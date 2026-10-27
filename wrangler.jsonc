@@ -12,7 +12,7 @@
   "observability": { "enabled": true },
   "vars": {
     // Public base URL of the app; used to build the Webflow OAuth redirect URI.
-    "APP_URL": "http://localhost:8787"
+    "APP_URL": "https://beqi-audit-app.kreshnik.workers.dev"
   },
   "triggers": {
     // Scheduler tick: starts audit runs for every site whose next_run_at is due.
