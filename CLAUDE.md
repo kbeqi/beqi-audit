@@ -35,6 +35,7 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 - `npm run deploy` — build and deploy. Run `npm run db:migrate:remote` first when `drizzle/` changed.
 - `npm run typecheck`, `npm run lint`, `npm run cf-typegen` (after editing `wrangler.jsonc`).
 - `npm run db:generate` after changing `src/db/schema.ts`, then `npm run db:migrate:local`.
+- `npm run test:links [baseUrl]` — crawls the running app (default :8787) and fails on any link that doesn't resolve, hits the error/not-found page, or whose entity label doesn't match the destination heading. Run it against the preview with seed data and against the live URL after a deploy.
 
 ## Secrets and vars
 
