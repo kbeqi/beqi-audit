@@ -50,8 +50,8 @@ export async function runFixAgent(input: FixAgentInput): Promise<FixAgentOutput>
       thinking: { type: "adaptive" },
       output_config: { effort: "high" },
       system: [{ type: "text", text: FIX_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-      mcp_servers: [webflowMcpServer(connection, env, FIX_TOOLS)],
-      tools: [webflowToolset()],
+      mcp_servers: [webflowMcpServer(connection, env)],
+      tools: [webflowToolset(FIX_TOOLS)],
       messages,
     });
 

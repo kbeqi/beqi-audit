@@ -36,19 +36,25 @@ export const FIX_TOOLS = AUDIT_TOOLS;
 export function webflowMcpServer(
   connection: Pick<WebflowConnection, "accessToken" | "mcpServerUrl">,
   env: Pick<CloudflareEnv, "WEBFLOW_MCP_URL">,
-  allowedTools: string[],
 ): Anthropic.Beta.BetaRequestMCPServerURLDefinition {
   return {
     type: "url",
     name: WEBFLOW_MCP_SERVER_NAME,
     url: connection.mcpServerUrl ?? env.WEBFLOW_MCP_URL,
     authorization_token: connection.accessToken,
-    tool_configuration: { enabled: true, allowed_tools: allowedTools },
   };
 }
 
-export function webflowToolset(): Anthropic.Beta.BetaMCPToolset {
-  return { type: "mcp_toolset", mcp_server_name: WEBFLOW_MCP_SERVER_NAME };
+// The allow-list lives on the toolset (the mcp-client-2026-09-15 beta rejects
+// tool_configuration on the server definition): everything off by default,
+// the listed tools on.
+export function webflowToolset(allowedTools: string[]): Anthropic.Beta.BetaMCPToolset {
+  return {
+    type: "mcp_toolset",
+    mcp_server_name: WEBFLOW_MCP_SERVER_NAME,
+    default_config: { enabled: false },
+    configs: Object.fromEntries(allowedTools.map((name) => [name, { enabled: true }])),
+  };
 }
 
 const READ_PREFIXES = ["get_", "list_", "query_", "search_", "read_", "check_", "guide"];

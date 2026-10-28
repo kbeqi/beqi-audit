@@ -62,9 +62,9 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
       thinking: { type: "adaptive" },
       output_config: { effort: "high" },
       system: [{ type: "text", text: AUDIT_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-      mcp_servers: [webflowMcpServer(connection, env, AUDIT_TOOLS)],
+      mcp_servers: [webflowMcpServer(connection, env)],
       tools: [
-        webflowToolset(),
+        webflowToolset(AUDIT_TOOLS),
         { type: "web_fetch_20260209", name: "web_fetch", max_uses: WEB_FETCH_MAX_USES, allowed_domains: [host] },
       ],
       messages,
