@@ -10,7 +10,7 @@ import { currentActor } from "@/lib/auth";
 import { appUrl, getCtx } from "@/lib/env";
 import { parseRecipients, sendEmail, testEmail } from "@/lib/email";
 import { newId, nowIso, slugify } from "@/lib/id";
-import { importSitesForConnection } from "@/lib/webflow/import";
+import { ensurePublishWebhook, importSitesForConnection } from "@/lib/webflow/import";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startFix, startRun } from "@/audit/start";
 
@@ -146,6 +146,14 @@ export async function updateSiteSettings(formData: FormData) {
       .map((p) => (p.startsWith("/") ? p : `/${p}`));
     const maxPages = Math.min(200, Math.max(5, Number(formData.get("maxPages") ?? 40) || 40));
     const baseUrl = String(formData.get("baseUrl") ?? "").trim();
+    // Up to 10 custom questions for the AI visibility sample; empty = use the
+    // audit's own suggestions.
+    const aiPrompts = String(formData.get("aiPrompts") ?? "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 10);
+    const auditOnPublish = formData.get("auditOnPublish") === "on";
     const db = await getDb();
     await db
       .update(schema.sites)
@@ -155,10 +163,24 @@ export async function updateSiteSettings(formData: FormData) {
         keyPages: keyPages.length ? keyPages : ["/"],
         maxPages,
         isEnterprise: formData.get("isEnterprise") === "on",
+        auditOnPublish,
+        aiPrompts: aiPrompts.length ? aiPrompts : null,
         ...(baseUrl ? { baseUrl } : {}),
       })
       .where(eq(schema.sites.id, siteId));
-    await log("site.settings_updated", { freq, keyPages, maxPages }, siteId);
+    await log("site.settings_updated", { freq, keyPages, maxPages, auditOnPublish, aiPrompts: aiPrompts.length }, siteId);
+    // Make sure Webflow tells us about publishes when the option is on.
+    if (auditOnPublish) {
+      const { env } = await getCtx();
+      const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+      if (site?.connectionId && !site.webhookId) {
+        const connection = await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, site.connectionId) });
+        if (connection && !connection.revokedAt) {
+          const fresh = await ensureFreshConnection(env, connection);
+          await ensurePublishWebhook(db, fresh, site, env).catch(() => {});
+        }
+      }
+    }
     revalidatePath(`/sites/${siteId}`);
     redirect(`/sites/${siteId}?saved=1`);
   });

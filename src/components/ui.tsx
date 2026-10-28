@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ProposalRisk, ProposalStatus, RunStatus, Severity } from "@/db/schema";
+import type { Confidence, Effort, ProposalRisk, ProposalStatus, RunStatus, Severity } from "@/db/schema";
 
 // ---- tones ------------------------------------------------------------------
 
@@ -136,6 +136,23 @@ export function RiskPill({ risk }: { risk: ProposalRisk | null | undefined }) {
   if (!risk) return null;
   const tone: Tone = risk === "high" ? "serious" : risk === "medium" ? "warn" : "neutral";
   return <Pill tone={tone} title="Risk of applying this change automatically">{risk} risk</Pill>;
+}
+
+// How sure the audit is. Only low/medium are shown: high is the norm.
+export function ConfidencePill({ confidence }: { confidence: Confidence | null | undefined }) {
+  if (!confidence || confidence === "high") return null;
+  return (
+    <Pill tone="neutral" title={confidence === "medium" ? "Strongly indicated, not verified directly" : "Inferred from partial evidence; verify before acting"}>
+      {confidence === "medium" ? "likely" : "unverified"}
+    </Pill>
+  );
+}
+
+// Effort to fix. Quick wins get the accent so they stand out in a list.
+export function EffortPill({ effort }: { effort: Effort | null | undefined }) {
+  if (!effort) return null;
+  if (effort === "quick") return <Pill tone="accent" title="Minutes in Webflow, or an approved fix">quick win</Pill>;
+  return <Pill tone="neutral" title={effort === "moderate" ? "An hour or two of content or design work" : "A project"}>{effort === "moderate" ? "some work" : "project"}</Pill>;
 }
 
 export function CountPill({ n, tone, label }: { n: number; tone: Tone; label: string }) {
@@ -286,6 +303,10 @@ export function fmtNumber(n: number | null | undefined): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toLocaleString("en-US");
+}
+
+export function triggerLabel(trigger: string): string {
+  return trigger === "publish" ? "after publish" : trigger === "schedule" ? "scheduled" : trigger === "manual" ? "manual" : trigger;
 }
 
 export function hostOf(url: string): string {

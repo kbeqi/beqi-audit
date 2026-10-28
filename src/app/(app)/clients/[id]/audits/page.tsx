@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { clientDetail } from "@/lib/queries";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
-import { Card, CardHeader, EmptyState, StatusPill, fmtCost, fmtDate, fmtDuration } from "@/components/ui";
+import { Card, CardHeader, EmptyState, StatusPill, fmtCost, fmtDate, fmtDuration, triggerLabel } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -76,7 +76,7 @@ export default async function ClientAudits({ params, searchParams }: { params: P
                         </Link>
                       </td>
                       {sites.length > 1 && <td className="text-ink-2">{s?.site.name ?? "—"}</td>}
-                      <td className="text-ink-2">{r.trigger}</td>
+                      <td className="text-ink-2">{triggerLabel(r.trigger)}</td>
                       <td>
                         <StatusPill status={r.status} />
                       </td>

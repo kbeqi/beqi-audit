@@ -1,7 +1,8 @@
-import type { CategoryKey, Finding, Run, Severity } from "@/db/schema";
-import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
+import type { AiAnswer, CategoryKey, Finding, PageMetric, Run, Severity } from "@/db/schema";
+import { CATEGORY_LABELS, CATEGORY_ORDER, SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
 import { Markdown } from "./markdown";
-import { Delta, ScoreRing, SeverityPill, fmtDate, hostOf, scoreTone } from "./ui";
+import { AiVisibilityCard, PerformanceCard } from "./insights";
+import { Delta, EffortPill, ScoreRing, SeverityPill, fmtDate, hostOf, scoreTone } from "./ui";
 
 const sevRank = Object.fromEntries(SEVERITY_ORDER.map((s, i) => [s, i])) as Record<Severity, number>;
 
@@ -14,6 +15,8 @@ export function Report({
   previous,
   findings,
   fixesDone,
+  metrics = [],
+  aiAnswers = [],
 }: {
   run: Run;
   siteName: string;
@@ -22,6 +25,8 @@ export function Report({
   previous: { scoreOverall: number | null; scores: Run["scores"]; finishedAt: string | null } | null;
   findings: Finding[];
   fixesDone: { title: string | null; status: string; appliedAt: string | null }[];
+  metrics?: PageMetric[];
+  aiAnswers?: AiAnswer[];
 }) {
   const counts = Object.fromEntries(SEVERITY_ORDER.map((s) => [s, findings.filter((f) => f.severity === s).length])) as Record<Severity, number>;
   const groups = new Map<CategoryKey, Finding[]>();
@@ -57,8 +62,8 @@ export function Report({
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {CATEGORY_ORDER.map((cat) => {
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+        {SCORED_CATEGORIES.map((cat) => {
           const score = run.scores?.[cat];
           const tone = scoreTone(score);
           return (
@@ -96,6 +101,9 @@ export function Report({
           )}
         </section>
       )}
+
+      {(metrics.length > 0 || run.summary?.perf) && <PerformanceCard metrics={metrics} unavailable={run.summary?.perf?.unavailable} />}
+      {run.summary?.aiVisibility && <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} publicView />}
 
       {fixesDone.length > 0 && (
         <section className="rounded-xl border border-line bg-surface p-6">
@@ -145,8 +153,9 @@ export function Report({
                       return (
                         <li key={f.id} className="px-5 py-3">
                           <div className="flex flex-wrap items-start gap-3">
-                            <div className="pt-0.5">
+                            <div className="flex items-center gap-1.5 pt-0.5">
                               <SeverityPill severity={f.severity} />
+                              <EffortPill effort={f.effort} />
                             </div>
                             <div className="min-w-0 flex-1">
                               <div className="text-sm font-medium text-ink">{f.title}</div>
@@ -186,7 +195,7 @@ export function Report({
       </section>
 
       <p className="text-xs text-ink-3">
-        Severity: critical and high need attention soon; medium and low are improvements; info is for awareness. Scores are per category and combined into the overall score.
+        Severity: critical and high need attention soon; medium and low are improvements; info is for awareness. Scores are per category and combined into the overall score. &ldquo;Quick win&rdquo; marks fixes that take minutes. AI visibility is a small sample of assistant answers and is not part of the score.
       </p>
     </article>
   );

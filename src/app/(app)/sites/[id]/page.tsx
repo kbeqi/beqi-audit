@@ -12,8 +12,9 @@ import { FindingsList } from "@/components/findings";
 import { SubmitButton } from "@/components/submit-button";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
-import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, scoreTone, timeAgo } from "@/components/ui";
-import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
+import { PerformanceCard } from "@/components/insights";
+import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, scoreTone, timeAgo, triggerLabel } from "@/components/ui";
+import { CATEGORY_LABELS, SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
   await requireSignedIn(`/sites/${id}`);
   const data = await siteDetail(id);
   if (!data) notFound();
-  const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules } = data;
+  const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, metrics } = data;
   const running = runs.find((r) => r.status === "running" || r.status === "queued") ?? null;
   const history = runs.filter((r) => r.status === "complete").map((r) => r.scoreOverall).reverse().slice(-12);
   const back = `/sites/${site.id}`;
@@ -101,8 +102,8 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             )}
           </div>
         </Card>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {CATEGORY_ORDER.map((cat) => {
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {SCORED_CATEGORIES.map((cat) => {
             const score = latest?.scores?.[cat];
             const tone = scoreTone(score);
             return (
@@ -152,6 +153,8 @@ export default async function SitePage({ params, searchParams }: { params: Promi
           </div>
         </Card>
       )}
+
+      {latest && (metrics.length > 0 || latest.summary?.perf) && <PerformanceCard metrics={metrics} unavailable={latest.summary?.perf?.unavailable} />}
 
       <Card id="fixes">
         <CardHeader title="Proposed fixes" count={openProposals.length} description="Nothing is written to Webflow until you approve it. Applied changes go live on the site's next publish." />
@@ -230,7 +233,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                         {fmtDate(r.createdAt)}
                       </Link>
                     </td>
-                    <td className="text-ink-2">{r.trigger}</td>
+                    <td className="text-ink-2">{triggerLabel(r.trigger)}</td>
                     <td>
                       <StatusPill status={r.status} />
                     </td>
@@ -278,6 +281,23 @@ export default async function SitePage({ params, searchParams }: { params: Promi
               </label>
               <input id="maxPages" name="maxPages" type="number" min={5} max={200} defaultValue={site.maxPages} className={inputCls} />
               <p className="mt-1 text-xs text-ink-3">More pages means a longer, costlier audit. 40 covers most marketing sites.</p>
+            </div>
+            <label className="flex items-start gap-2 text-ink-2">
+              <input name="auditOnPublish" type="checkbox" defaultChecked={site.auditOnPublish} className="mt-0.5" />
+              <span>
+                <span className="font-medium text-ink">Check the site after each publish</span>
+                <span className="block text-xs text-ink-3">
+                  Webflow tells the app when the site is published; an audit runs and reports what changed.{" "}
+                  {site.webhookId ? "Webhook registered." : site.auditOnPublish ? "Webhook not registered yet; saving registers it." : ""}
+                </span>
+              </span>
+            </label>
+            <div>
+              <label htmlFor="aiPrompts" className={labelCls}>
+                Questions for the AI visibility sample (optional; one per line, up to 10)
+              </label>
+              <textarea id="aiPrompts" name="aiPrompts" rows={4} defaultValue={site.aiPrompts?.join("\n") ?? ""} placeholder={"best Webflow agency in Tirana\nhow much does a Webflow site cost"} className={inputCls} />
+              <p className="mt-1 text-xs text-ink-3">What a prospective customer would ask an AI assistant. Empty means the audit writes its own questions from the site&apos;s content.</p>
             </div>
             <label className="flex items-center gap-2 text-ink-2">
               <input name="isEnterprise" type="checkbox" defaultChecked={site.isEnterprise} />

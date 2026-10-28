@@ -9,6 +9,14 @@ export function newId(): string {
   return time + rand;
 }
 
+// URL-safe random token (base36), for webhook secrets and the like.
+export function randomToken(length = 24): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  let out = "";
+  for (const b of bytes) out += ALPHABET[b % 36];
+  return out;
+}
+
 export function slugify(input: string): string {
   return input
     .toLowerCase()

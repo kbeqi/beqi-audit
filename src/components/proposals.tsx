@@ -3,7 +3,7 @@ import type { FixProposal, Site } from "@/db/schema";
 import type { FixAction } from "@/agent/catalog";
 import { decideProposal } from "@/app/actions";
 import { SubmitButton } from "./submit-button";
-import { ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
+import { EffortPill, ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
 
 export const ACTION_LABELS: Record<FixAction, string> = {
   page_seo: "Page SEO settings",
@@ -137,6 +137,7 @@ export function ProposalRow({ proposal, site, back, compact = false }: { proposa
             </Link>
             <ProposalStatusPill status={proposal.status} />
             <RiskPill risk={proposal.risk} />
+            <EffortPill effort={proposal.effort} />
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-ink-3">
             {site && (

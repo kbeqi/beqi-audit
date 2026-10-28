@@ -3,13 +3,17 @@
 // rest of the app only ever sees validated data.
 
 import { z } from "zod";
-import { CHECK_IDS, FIX_ACTIONS } from "./catalog";
+import { AGENT_CHECK_IDS, FIX_ACTIONS } from "./catalog";
 
 export const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
+export const CONFIDENCES = ["high", "medium", "low"] as const;
+export const EFFORTS = ["quick", "moderate", "large"] as const;
 
 export const ReportFindingSchema = z.object({
-  checkId: z.enum(CHECK_IDS).describe("A check id from the catalog, verbatim"),
+  checkId: z.enum(AGENT_CHECK_IDS as [string, ...string[]]).describe("A check id from the catalog, verbatim"),
   severity: z.enum(SEVERITIES),
+  confidence: z.enum(CONFIDENCES).describe("high: verified directly in a tool result or fetched page; medium: strongly indicated; low: inferred"),
+  effort: z.enum(EFFORTS).describe("quick: minutes in Webflow or an approved fix; moderate: an hour or two of design/content work; large: a project"),
   title: z.string().describe("One line, specific to this page or subject"),
   detail: z.string().describe("What was observed and why it matters, 1-3 sentences"),
   pagePath: z.string().nullable().describe("Published path such as /pricing; null for site-wide findings"),
@@ -26,6 +30,7 @@ export const ReportProposalSchema = z.object({
   findingIndex: z.number().int().describe("Index into findings[] of the finding this fix addresses"),
   action: z.enum(FIX_ACTIONS),
   title: z.string().describe("Short imperative label, e.g. 'Add meta description to /pricing'"),
+  effort: z.enum(EFFORTS),
   target: z.object({
     pageId: z.string().nullable(),
     pagePath: z.string().nullable(),
@@ -51,8 +56,14 @@ export const AuditReportSchema = z.object({
     pagesReviewed: z.number().int().describe("Pages whose live HTML was fetched and inspected"),
     hasCustomDomain: z.boolean(),
     cmsCollections: z.number().int(),
+    brandName: z.string().describe("The business name as the site presents it"),
+    brandAliases: z.array(z.string()).describe("Other spellings, legal names or product names used on the site, up to 5"),
+    keyFacts: z.array(z.string()).describe("5-10 short, verifiable facts about the business stated on the site: what it does, who for, where, products/services, pricing or plan facts, founding/ownership. Used to check AI answers for accuracy."),
     notes: z.array(z.string()).describe("Anything that limited the audit (tool errors, plan restrictions, caps hit)"),
   }),
+  aiPrompts: z
+    .array(z.string())
+    .describe("6-10 questions a prospective customer might ask an AI assistant where this site should be the answer or a cited source. Natural language, no brand name in most of them (e.g. 'best Webflow agency in Tirana', 'how much does X cost'); include 1-2 branded ones ('what does <brand> do')."),
   summary: z.string().describe("2-4 short paragraphs of markdown for the site owner: overall health, what matters most, what to do first"),
   highlights: z.array(z.string()).describe("Up to 6 one-line highlights, most important first"),
   findings: z.array(ReportFindingSchema),
@@ -74,3 +85,15 @@ export const FixResultSchema = z.object({
   needsPublish: z.boolean().describe("True when the site must be published for the change to go live"),
 });
 export type FixResult = z.infer<typeof FixResultSchema>;
+
+// Scoring of sampled AI answers against the site's stated facts.
+export const AiAnswerJudgementSchema = z.object({
+  answers: z.array(
+    z.object({
+      index: z.number().int(),
+      recommended: z.boolean().describe("The answer recommends or lists the brand as an option for the asker"),
+      issues: z.array(z.string()).describe("Claims about the brand in this answer that contradict the key facts; each one short and quoting the wrong claim. Empty when none."),
+    }),
+  ),
+});
+export type AiAnswerJudgement = z.infer<typeof AiAnswerJudgementSchema>;

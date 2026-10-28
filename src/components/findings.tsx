@@ -3,7 +3,7 @@ import type { CategoryKey, Finding, FixProposal, Severity } from "@/db/schema";
 import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
 import { ignoreFinding, markFindingState } from "@/app/actions";
 import { SubmitButton } from "./submit-button";
-import { SeverityPill, btnGhost, btnSm } from "./ui";
+import { ConfidencePill, EffortPill, SeverityPill, btnGhost, btnSm } from "./ui";
 
 const sevRank = Object.fromEntries(SEVERITY_ORDER.map((s, i) => [s, i])) as Record<Severity, number>;
 
@@ -66,6 +66,8 @@ function FindingRow({ f, siteId, baseUrl, back, proposals, isNew }: { f: Finding
         <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
           <SeverityPill severity={f.severity} />
           {isNew && <span className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide tone-accent">new</span>}
+          <EffortPill effort={f.effort} />
+          <ConfidencePill confidence={f.confidence} />
         </div>
         <div className="min-w-0 flex-[1_1_16rem]">
           <div className="text-sm font-medium text-ink">{f.title}</div>

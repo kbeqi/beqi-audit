@@ -19,6 +19,6 @@ export default async function SharedReportPage({ params }: { params: Promise<{ t
   const { token } = await params;
   const data = await sharedReport(token);
   if (!data) notFound();
-  const { run, site, client, findings, previous, fixesDone } = data;
-  return <Report run={run} siteName={site.name} baseUrl={site.baseUrl} clientName={client?.name ?? null} previous={previous} findings={findings} fixesDone={fixesDone} />;
+  const { run, site, client, findings, previous, fixesDone, metrics, aiAnswers } = data;
+  return <Report run={run} siteName={site.name} baseUrl={site.baseUrl} clientName={client?.name ?? null} previous={previous} findings={findings} fixesDone={fixesDone} metrics={metrics} aiAnswers={aiAnswers} />;
 }

@@ -14,8 +14,9 @@ import { runNow, shareRun, unshareRun } from "@/app/actions";
 import { CopyField } from "@/components/copy-field";
 import { appUrl, getEnv } from "@/lib/env";
 import { SubmitButton } from "@/components/submit-button";
-import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber } from "@/components/ui";
-import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
+import { AiVisibilityCard, PerformanceCard } from "@/components/insights";
+import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber, triggerLabel } from "@/components/ui";
+import { CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
@@ -34,8 +35,9 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   await requireSignedIn(`/runs/${id}`);
   const data = await runDetail(id);
   if (!data) notFound();
-  const { run, site, client, findings, stateByFp, proposals, events } = data;
+  const { run, site, client, findings, stateByFp, proposals, events, metrics, aiAnswers } = data;
   const live = run.status === "queued" || run.status === "running";
+  const regressions = run.summary?.regressions;
   const visible = findings.filter((f) => {
     const s = stateByFp.get(f.fingerprint);
     return !(s && (s.status === "ignored" || s.status === "false_positive"));
@@ -53,7 +55,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         eyebrow={
           <span className="inline-flex items-center gap-2">
             <StatusPill status={run.status} />
-            <span>{run.trigger} audit</span>
+            <span>{triggerLabel(run.trigger)} audit</span>
             {run.model && <span className="font-mono">{run.model}</span>}
           </span>
         }
@@ -77,7 +79,16 @@ export default async function RunPage({ params, searchParams }: { params: Promis
       {unshared && <Notice tone="good">Sharing stopped. The old link no longer works.</Notice>}
       {live && (
         <Notice tone="accent">
-          Claude is auditing the site through Webflow&apos;s MCP server and the live URL — reading only, nothing is changed. Audits usually take 5–10 minutes; this page updates as it works, and you can leave and come back.
+          {run.trigger === "publish" ? "The site was just published, so Claude is checking it again. " : ""}Claude is auditing the site through Webflow&apos;s MCP server and the live URL — reading only, nothing is changed. Audits usually take 5–10 minutes; this page updates as it works, and you can leave and come back.
+        </Notice>
+      )}
+      {run.status === "complete" && run.trigger === "publish" && regressions && (
+        <Notice tone={regressions.newCriticalHigh > 0 || (regressions.scoreDelta ?? 0) < -5 ? "serious" : "good"}>
+          <strong>Post-publish check.</strong>{" "}
+          {regressions.newCriticalHigh > 0
+            ? `${regressions.newCriticalHigh} new critical or high finding${regressions.newCriticalHigh === 1 ? "" : "s"} since the last audit.`
+            : "No new critical or high findings since the last audit."}
+          {regressions.scoreDelta !== null && ` Score ${regressions.scoreDelta > 0 ? "up" : regressions.scoreDelta < 0 ? "down" : "unchanged"}${regressions.scoreDelta ? ` ${Math.abs(regressions.scoreDelta)}` : ""}.`}
         </Notice>
       )}
 
@@ -132,8 +143,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <StatTile label="Cost" value={fmtCost(run.usage?.estimatedCostUsd)} hint={run.usage ? `${fmtNumber(run.usage.inputTokens + run.usage.cacheReadTokens)} in · ${fmtNumber(run.usage.outputTokens)} out · ${run.usage.toolCalls} tool calls` : undefined} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {CATEGORY_ORDER.map((cat) => (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+            {SCORED_CATEGORIES.map((cat) => (
               <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
                 <div className="text-xs font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
                 <div className="mt-1 flex items-end justify-between">
@@ -142,6 +153,11 @@ export default async function RunPage({ params, searchParams }: { params: Promis
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <PerformanceCard metrics={metrics} unavailable={run.summary.perf?.unavailable} />
+            <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} />
           </div>
 
           {run.agentSummary && (

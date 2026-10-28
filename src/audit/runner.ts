@@ -10,16 +10,26 @@ import { appUrl } from "@/lib/env";
 import { newId, nowIso, sha256Hex } from "@/lib/id";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { runAuditAgent } from "@/agent/audit";
+import { sampleAiVisibility } from "@/agent/ai-visibility";
 import { CHECKS, isCheckId } from "@/agent/catalog";
 import { createEventSink } from "@/agent/events";
-import { MODEL } from "@/agent/anthropic";
+import { MODEL, emptyUsage } from "@/agent/anthropic";
 import type { PreviousFinding } from "@/agent/prompts";
 import type { AuditReport } from "@/agent/schemas";
+import { measureKeyPages, type PsiResult } from "./psi";
 import { getJson, putJson, runKey } from "./store";
 import { CATEGORY_ORDER, scoreCategories } from "./score";
 import type { FindingDraft } from "./types";
 
-export type RunEnv = Pick<CloudflareEnv, "DB" | "AUDIT_STORE" | "ANTHROPIC_API_KEY" | "WEBFLOW_MCP_URL" | "APP_URL" | "RESEND_API_KEY" | "EMAIL_FROM">;
+export type RunEnv = Pick<
+  CloudflareEnv,
+  "DB" | "AUDIT_STORE" | "ANTHROPIC_API_KEY" | "WEBFLOW_MCP_URL" | "APP_URL" | "RESEND_API_KEY" | "EMAIL_FROM" | "PSI_API_KEY" | "PERPLEXITY_API_KEY"
+>;
+
+// Deterministic findings produced outside the agent, handed to stepAnalyze via KV.
+interface ExtraFindings {
+  findings: FindingDraft[];
+}
 
 async function loadRun(env: RunEnv, runId: string) {
   const db = dbFromEnv(env);
@@ -43,11 +53,33 @@ export async function stepPrepare(env: RunEnv, runId: string): Promise<{ connect
   return { connectionId: connection.id };
 }
 
-// Step 2: the agent audits the site; raw outputs go to KV.
+// Step 2: measured Core Web Vitals for the key pages (PageSpeed Insights).
+// Never fails the run: an outage becomes a perf.psi-unavailable finding.
+export async function stepMetrics(env: RunEnv, runId: string): Promise<{ pages: number; passing: number }> {
+  const { run, site } = await loadRun(env, runId);
+  const emit = createEventSink(env, run.id);
+  await emit("status", `Measuring Core Web Vitals for ${Math.min(site.keyPages.length || 1, 5)} key page(s)`);
+  let result: PsiResult;
+  try {
+    result = await measureKeyPages(env, run.id, site.id, site.baseUrl, site.keyPages);
+  } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    await emit("warning", `PageSpeed Insights failed: ${msg.slice(0, 200)}`);
+    result = { pages: [], findings: [], summaryText: `PageSpeed Insights failed: ${msg.slice(0, 200)}`, summary: { pages: 0, passing: 0, unavailable: true } };
+  }
+  await putJson(env.AUDIT_STORE, runKey(run.id, "psi"), { pages: result.pages, summary: result.summary, summaryText: result.summaryText });
+  await putJson(env.AUDIT_STORE, runKey(run.id, "psi-findings"), { findings: result.findings } satisfies ExtraFindings);
+  const ok = result.pages.filter((p) => p.ok).length;
+  await emit(ok ? "status" : "warning", ok ? `PageSpeed measured ${ok} page(s); ${result.summary.passing} pass Core Web Vitals` : "PageSpeed Insights returned no measurements");
+  return { pages: result.pages.length, passing: result.summary.passing };
+}
+
+// Step 3: the agent audits the site; raw outputs go to KV.
 export async function stepAgent(env: RunEnv, runId: string): Promise<{ findings: number; proposals: number }> {
   const { db, run, site, client, connection } = await loadRun(env, runId);
   if (!connection) throw new Error("Site has no active Webflow connection");
   const fresh = await ensureFreshConnection(env, connection);
+  const psi = await getJson<{ summaryText: string | null }>(env.AUDIT_STORE, runKey(run.id, "psi"));
 
   // Open findings from the last complete run, so the agent re-verifies them.
   const previousRun = await db.query.runs.findFirst({
@@ -67,6 +99,7 @@ export async function stepAgent(env: RunEnv, runId: string): Promise<{ findings:
     clientName: client?.name ?? "Client",
     connection: fresh,
     previous,
+    psiSummary: psi?.summaryText ?? null,
     emit: createEventSink(env, run.id),
   });
   await putJson(env.AUDIT_STORE, runKey(run.id, "report"), out.report);
@@ -76,21 +109,71 @@ export async function stepAgent(env: RunEnv, runId: string): Promise<{ findings:
   return { findings: out.report.findings.length, proposals: out.report.proposals.length };
 }
 
-// Step 3: score, diff against the previous run, persist findings and proposals.
+// Step 4: ask AI assistants the customer's questions and record how the brand
+// shows up. Never fails the run.
+export async function stepAiVisibility(env: RunEnv, runId: string): Promise<{ answers: number; mentioned: number }> {
+  const { db, run, site } = await loadRun(env, runId);
+  const report = await getJson<AuditReport>(env.AUDIT_STORE, runKey(runId, "report"));
+  if (!report) throw new Error("audit report missing");
+  const emit = createEventSink(env, run.id);
+  const usage = run.usage ?? emptyUsage();
+  const prompts = site.aiPrompts?.length ? site.aiPrompts : report.aiPrompts;
+  const out = await sampleAiVisibility({
+    env,
+    siteHost: new URL(site.baseUrl).host,
+    brandName: report.siteFacts.brandName || site.name,
+    brandAliases: report.siteFacts.brandAliases ?? [],
+    keyFacts: report.siteFacts.keyFacts ?? [],
+    prompts,
+    usage,
+    emit,
+  });
+  for (let i = 0; i < out.answers.length; i += 5) {
+    await db.insert(schema.aiAnswers).values(
+      out.answers.slice(i, i + 5).map((a) => ({
+        id: newId(),
+        runId: run.id,
+        siteId: site.id,
+        prompt: a.prompt,
+        engine: a.engine,
+        iteration: a.iteration,
+        mentioned: a.mentioned,
+        cited: a.cited,
+        recommended: a.recommended,
+        answer: a.answer.slice(0, 20_000),
+        citations: a.citations.slice(0, 20),
+        issues: a.issues,
+      })),
+    );
+  }
+  await putJson(env.AUDIT_STORE, runKey(run.id, "ai-findings"), { findings: out.findings } satisfies ExtraFindings);
+  await putJson(env.AUDIT_STORE, runKey(run.id, "ai-summary"), out.summary);
+  await db.update(schema.runs).set({ usage }).where(eq(schema.runs.id, run.id));
+  return { answers: out.summary.answers, mentioned: out.summary.mentioned };
+}
+
+// Step 5: score, diff against the previous run, persist findings and proposals.
 export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ findings: number; overall: number }> {
   const { db, run, site } = await loadRun(env, runId);
   const report = await getJson<AuditReport>(env.AUDIT_STORE, runKey(runId, "report"));
   if (!report) throw new Error("audit report missing");
+  const psi = await getJson<{ summary: RunSummary["perf"] }>(env.AUDIT_STORE, runKey(runId, "psi"));
+  const psiExtra = await getJson<ExtraFindings>(env.AUDIT_STORE, runKey(runId, "psi-findings"));
+  const aiExtra = await getJson<ExtraFindings>(env.AUDIT_STORE, runKey(runId, "ai-findings"));
+  const aiSummary = await getJson<RunSummary["aiVisibility"]>(env.AUDIT_STORE, runKey(runId, "ai-summary"));
 
   const drafts: { draft: FindingDraft; index: number }[] = [];
   report.findings.forEach((f, index) => {
     if (!isCheckId(f.checkId)) return;
+    if (CHECKS[f.checkId].deterministic) return; // code produces these, not the agent
     drafts.push({
       index,
       draft: {
         category: CHECKS[f.checkId].category,
         checkId: f.checkId,
         severity: f.severity,
+        confidence: f.confidence,
+        effort: f.effort,
         title: f.title,
         detail: f.detail,
         pagePath: f.pagePath ?? undefined,
@@ -100,6 +183,13 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
       },
     });
   });
+  // Deterministic findings get indexes past the agent's so proposals can't
+  // point at them.
+  let extraIndex = report.findings.length;
+  for (const d of [...(psiExtra?.findings ?? []), ...(aiExtra?.findings ?? [])]) {
+    if (!isCheckId(d.checkId)) continue;
+    drafts.push({ index: extraIndex++, draft: d });
+  }
 
   // Ignore rules suppress findings from scoring and from the "open" list.
   const rules = await db.query.ignoreRules.findMany({ where: eq(schema.ignoreRules.siteId, site.id) });
@@ -135,9 +225,11 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
     fingerprint: f.fingerprint,
     data: f.draft.data ?? null,
     ignored: f.ignored,
+    confidence: f.draft.confidence ?? null,
+    effort: f.draft.effort ?? null,
   }));
-  for (let i = 0; i < findingRows.length; i += 7) {
-    await db.insert(schema.findings).values(findingRows.slice(i, i + 7));
+  for (let i = 0; i < findingRows.length; i += 6) {
+    await db.insert(schema.findings).values(findingRows.slice(i, i + 6));
   }
 
   // Finding lifecycle across runs.
@@ -203,8 +295,20 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
       proposal: { changes: p.changes },
       previous: { changes: p.changes.map((c) => ({ field: c.field, value: c.from })) },
       rationale: p.rationale,
+      effort: p.effort ?? null,
     });
   }
+
+  // Regressions against the previous completed run: what a publish broke.
+  const previousRun = await db.query.runs.findFirst({
+    where: and(eq(schema.runs.siteId, site.id), eq(schema.runs.status, "complete"), ne(schema.runs.id, run.id)),
+    orderBy: desc(schema.runs.createdAt),
+  });
+  const newCriticalHigh = active.filter((f) => !stateByFp.has(f.fingerprint) && (f.draft.severity === "critical" || f.draft.severity === "high")).length;
+  const regressions: RunSummary["regressions"] = {
+    scoreDelta: previousRun?.scoreOverall === null || previousRun?.scoreOverall === undefined ? null : overall - previousRun.scoreOverall,
+    newCriticalHigh,
+  };
 
   const bySeverity = Object.fromEntries(["critical", "high", "medium", "low", "info"].map((s) => [s, 0])) as Record<Severity, number>;
   const byCategory = Object.fromEntries(CATEGORY_ORDER.map((c) => [c, 0])) as Record<CategoryKey, number>;
@@ -220,6 +324,9 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
     newFindings,
     resolvedFindings,
     proposals,
+    perf: psi?.summary ?? undefined,
+    aiVisibility: aiSummary ?? undefined,
+    regressions,
   };
   await db.update(schema.runs).set({ scoreOverall: overall, scores, summary }).where(eq(schema.runs.id, run.id));
   return { findings: active.length, overall };
@@ -263,6 +370,9 @@ export async function stepFinalize(env: RunEnv, runId: string, error?: string): 
       proposals: summary?.proposals ?? 0,
       appUrl: appUrl(env),
       runId: run.id,
+      trigger: run.trigger,
+      newCriticalHigh: summary?.regressions?.newCriticalHigh ?? 0,
+      aiVisibility: summary?.aiVisibility ?? null,
     }),
     site.id,
   );
@@ -272,7 +382,9 @@ export async function stepFinalize(env: RunEnv, runId: string, error?: string): 
 export async function runAuditInline(env: RunEnv, runId: string): Promise<void> {
   try {
     await stepPrepare(env, runId);
+    await stepMetrics(env, runId);
     await stepAgent(env, runId);
+    await stepAiVisibility(env, runId).catch((e) => console.warn("ai visibility failed", e));
     await stepAnalyze(env, runId);
     await stepFinalize(env, runId);
   } catch (e) {

@@ -29,6 +29,8 @@ export interface AuditAgentInput {
   clientName: string;
   connection: WebflowConnection;
   previous: PreviousFinding[];
+  // Text block of measured Core Web Vitals (from PageSpeed Insights), or null.
+  psiSummary: string | null;
   emit: EventSink;
 }
 
@@ -42,16 +44,19 @@ export interface AuditAgentOutput {
 }
 
 export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentOutput> {
-  const { env, runId, site, clientName, connection, previous, emit } = input;
+  const { env, runId, site, clientName, connection, previous, psiSummary, emit } = input;
   const client = getAnthropic(env);
   const started = Date.now();
   const usage = emptyUsage();
   const agentId = `${MODEL}|${AGENT_HARNESS}|${runId.slice(-6)}`;
   const host = new URL(site.baseUrl).host;
   const pageBudget = Math.min(site.maxPages, PAGE_BUDGET_CAP);
+  // The staging host is fetched once to check it is not indexable.
+  const allowedDomains = [host];
+  if (site.shortName && !host.endsWith(".webflow.io")) allowedDomains.push(`${site.shortName}.webflow.io`);
 
   const messages: Anthropic.Beta.BetaMessageParam[] = [
-    { role: "user", content: auditTaskPrompt({ site, clientName, agentId, pageBudget, linkBudget: 40, previous }) },
+    { role: "user", content: auditTaskPrompt({ site, clientName, agentId, pageBudget, linkBudget: 40, previous, psiSummary }) },
   ];
   const writeAttempts: string[] = [];
   let finalText = "";
@@ -70,7 +75,7 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
       mcp_servers: [webflowMcpServer(connection, env)],
       tools: [
         webflowToolset(AUDIT_TOOLS),
-        { type: "web_fetch_20260209", name: "web_fetch", max_uses: WEB_FETCH_MAX_USES, allowed_domains: [host], max_content_tokens: WEB_FETCH_MAX_CONTENT_TOKENS },
+        { type: "web_fetch_20260209", name: "web_fetch", max_uses: WEB_FETCH_MAX_USES, allowed_domains: allowedDomains, max_content_tokens: WEB_FETCH_MAX_CONTENT_TOKENS },
       ],
       messages,
     });

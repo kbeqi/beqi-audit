@@ -31,6 +31,7 @@ const PAGES = [
   { path: "/clients/c_goldie/settings", tabs: true },
   { path: "/sites/s_goldie" },
   { path: "/runs/r_g3" },
+  { path: "/runs/r_g4" },
   { path: "/runs/r_gs1" },
   { path: "/fixes/p2" },
   { path: "/team", top: true },

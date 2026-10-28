@@ -5,7 +5,7 @@ import { clientDetail } from "@/lib/queries";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { Markdown } from "@/components/markdown";
 import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, ScoreRing, StatTile, btnSecondary, btnSm, fmtDate, scoreTone, timeAgo } from "@/components/ui";
-import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
+import { CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
 import { humanAction } from "@/lib/activity";
 
 export const dynamic = "force-dynamic";
@@ -94,8 +94,8 @@ export default async function ClientOverview({ params, searchParams }: { params:
                 </Link>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-              {CATEGORY_ORDER.map((cat) => {
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+              {SCORED_CATEGORIES.map((cat) => {
                 const score = latest.scores?.[cat];
                 const tone = scoreTone(score);
                 return (
@@ -110,6 +110,26 @@ export default async function ClientOverview({ params, searchParams }: { params:
               })}
             </div>
           </div>
+          {(latest.summary?.aiVisibility?.answers || latest.summary?.perf) && (
+            <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-line px-5 py-2.5 text-xs text-ink-3">
+              {latest.summary?.perf && latest.summary.perf.pages > 0 && (
+                <span>
+                  <span className="font-medium text-ink-2">Core Web Vitals:</span> {latest.summary.perf.passing} of {latest.summary.perf.pages} key pages pass
+                </span>
+              )}
+              {latest.summary?.aiVisibility && latest.summary.aiVisibility.answers > 0 && (
+                <span>
+                  <span className="font-medium text-ink-2">AI answers (sample):</span> mentioned in {latest.summary.aiVisibility.mentioned} of {latest.summary.aiVisibility.answers}, site cited in {latest.summary.aiVisibility.cited}
+                  {latest.summary.aiVisibility.inaccuracies ? `, ${latest.summary.aiVisibility.inaccuracies} inaccurate claim${latest.summary.aiVisibility.inaccuracies === 1 ? "" : "s"}` : ""}
+                </span>
+              )}
+              {latest.trigger === "publish" && latest.summary?.regressions && (
+                <span>
+                  <span className="font-medium text-ink-2">After publish:</span> {latest.summary.regressions.newCriticalHigh ? `${latest.summary.regressions.newCriticalHigh} new critical/high` : "no new critical/high findings"}
+                </span>
+              )}
+            </div>
+          )}
           {(latest.highlights?.length || latest.agentSummary) && (
             <div className="grid gap-5 border-t border-line p-5 lg:grid-cols-[1fr_18rem]">
               {latest.agentSummary ? <Markdown text={latest.agentSummary.split("\n\n").slice(0, 2).join("\n\n")} /> : <div />}

@@ -5,20 +5,28 @@ export const CATEGORY_LABELS: Record<CategoryKey, string> = {
   seo: "SEO",
   aeo: "AEO / GEO",
   performance: "Performance",
+  trust: "Trust & identity",
   links: "Links",
   unused: "Unused CSS & scripts",
   naming: "Naming",
+  ai: "AI visibility",
 };
 
-export const CATEGORY_ORDER: CategoryKey[] = ["seo", "aeo", "performance", "links", "unused", "naming"];
+// Every category, for grouping findings.
+export const CATEGORY_ORDER: CategoryKey[] = ["seo", "aeo", "performance", "trust", "links", "unused", "naming", "ai"];
+// Categories that carry a score and feed the overall number. AI visibility is a
+// sample and is reported on its own.
+export const SCORED_CATEGORIES: CategoryKey[] = ["seo", "aeo", "performance", "trust", "links", "unused", "naming"];
 
 const CATEGORY_WEIGHT: Record<CategoryKey, number> = {
-  seo: 25,
-  performance: 20,
-  links: 15,
-  aeo: 15,
-  unused: 12.5,
-  naming: 12.5,
+  seo: 22,
+  aeo: 18,
+  performance: 18,
+  trust: 12,
+  links: 12,
+  unused: 9,
+  naming: 9,
+  ai: 0,
 };
 
 const SEVERITY_PENALTY: Record<Severity, number> = {
@@ -51,7 +59,7 @@ export function scoreCategories(findings: FindingDraft[]): { scores: CategorySco
   }
   let weighted = 0;
   let totalWeight = 0;
-  for (const cat of CATEGORY_ORDER) {
+  for (const cat of SCORED_CATEGORIES) {
     weighted += (scores[cat] ?? 100) * CATEGORY_WEIGHT[cat];
     totalWeight += CATEGORY_WEIGHT[cat];
   }

@@ -135,27 +135,29 @@ export async function siteDetail(siteId: string) {
   ]);
   const latest = runs.find((r) => r.status === "complete") ?? null;
   const previous = runs.filter((r) => r.status === "complete")[1] ?? null;
-  const findings = latest ? await openFindingsForRun(site.id, latest.id) : [];
+  const [findings, metrics] = latest ? await Promise.all([openFindingsForRun(site.id, latest.id), db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, latest.id) })]) : [[], []];
   const states = findings.length ? await db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, site.id) }) : [];
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
-  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity };
+  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity, metrics };
 }
 
 export async function runDetail(runId: string) {
   const db = await getDb();
   const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId) });
   if (!run) return null;
-  const [site, findings, events] = await Promise.all([
+  const [site, findings, events, metrics, aiAnswers] = await Promise.all([
     db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId) }),
     db.query.findings.findMany({ where: eq(schema.findings.runId, run.id) }),
     db.query.runEvents.findMany({ where: eq(schema.runEvents.streamId, run.id), orderBy: asc(schema.runEvents.seq), limit: 500 }),
+    db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, run.id) }),
+    db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, run.id), orderBy: [asc(schema.aiAnswers.prompt), asc(schema.aiAnswers.engine), asc(schema.aiAnswers.iteration)] }),
   ]);
   const client = site ? await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId) }) : null;
   const states = findings.length ? await db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, run.siteId) }) : [];
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
   const findingIds = findings.map((f) => f.id);
   const proposals = findingIds.length ? await chunked(findingIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.findingId, ids) })) : [];
-  return { run, site: site!, client, findings, stateByFp, proposals, events };
+  return { run, site: site!, client, findings, stateByFp, proposals, events, metrics, aiAnswers };
 }
 
 // Everything the public report shows, by share token. No internal ids leak:
@@ -165,9 +167,11 @@ export async function sharedReport(token: string) {
   const db = await getDb();
   const run = await db.query.runs.findFirst({ where: and(eq(schema.runs.shareToken, token), eq(schema.runs.status, "complete")) });
   if (!run) return null;
-  const [site, findings, previous] = await Promise.all([
+  const [site, findings, metrics, aiAnswers, previous] = await Promise.all([
     db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId) }),
     openFindingsForRun(run.siteId, run.id),
+    db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, run.id) }),
+    db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, run.id), orderBy: [asc(schema.aiAnswers.prompt), asc(schema.aiAnswers.engine), asc(schema.aiAnswers.iteration)] }),
     db.query.runs.findFirst({
       where: and(eq(schema.runs.siteId, run.siteId), eq(schema.runs.status, "complete"), lt(schema.runs.createdAt, run.createdAt)),
       orderBy: desc(schema.runs.createdAt),
@@ -180,7 +184,7 @@ export async function sharedReport(token: string) {
     where: and(eq(schema.fixProposals.siteId, site.id), inArray(schema.fixProposals.status, ["applied", "resolved"])),
     columns: { title: true, status: true, appliedAt: true },
   });
-  return { run, site, client, findings, previous: previous ?? null, fixesDone: done.filter((d) => d.appliedAt && d.appliedAt >= run.createdAt) };
+  return { run, site, client, findings, previous: previous ?? null, fixesDone: done.filter((d) => d.appliedAt && d.appliedAt >= run.createdAt), metrics, aiAnswers };
 }
 
 // The client hub: everything the client's tabs show, in one batched fetch.

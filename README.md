@@ -5,8 +5,8 @@ Claude audits Beqi's client Webflow sites on a schedule, proposes fixes, and app
 ## How it works
 
 1. Add a client, then **Connect Webflow**: a Beqi team member authorizes the app against Webflow's MCP server once per workspace (OAuth; no Webflow Marketplace app). Every site in the workspace is imported and scheduled weekly.
-2. The hourly cron starts a Workflow for every site that is due. Claude reads the site through Webflow's data tools (pages, SEO, schema, scripts, assets, sitemap flags) and the live URL, works through a fixed catalog of checks, and writes a report. The report is validated into findings and fix proposals, scored, and diffed against the previous audit (new / still open / resolved).
-3. The dashboard shows each site's score, trend and open issues; the site page shows Claude's summary, open findings, and proposed fixes. **Approve & apply** hands one proposal to the fix agent, which reads the current value, writes the change, reads it back, and reports. Changes to page settings, schema and code go live on the site's next publish.
+2. The hourly cron starts a Workflow for every site that is due; a Webflow publish also starts one (release assurance), so each release is checked for regressions. Each audit measures Core Web Vitals for the key pages with Google PageSpeed Insights, then Claude reads the site through Webflow's data tools (pages, SEO, schema, scripts, assets, sitemap flags) and the live URL, works through a fixed catalog of checks (SEO, answer-engine readiness, performance, trust and identity, links, unused code, naming) and writes a report. The report is validated into findings and fix proposals with confidence and effort, scored, and diffed against the previous audit (new / still open / resolved). Finally an AI visibility sample asks Perplexity and Claude the questions a customer would ask and records whether the brand is mentioned, cited and described accurately.
+3. The dashboard shows each site's score, trend and open issues; the site page shows Claude's summary, measured vitals, open findings, and proposed fixes (quick wins first). **Approve & apply** hands one proposal to the fix agent, which reads the current value, writes the change, reads it back, and reports. Changes to page settings, schema and code go live on the site's next publish.
 
 ## Local development
 
@@ -22,6 +22,9 @@ npm run preview                       # http://localhost:8787 (Workflows + cron)
 
 ```bash
 npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put RESEND_API_KEY        # sign-in links and client emails
+npx wrangler secret put PERPLEXITY_API_KEY    # optional: adds Perplexity to the AI visibility sample
+npx wrangler secret put PSI_API_KEY           # optional: PageSpeed Insights quota
 npm run db:migrate:remote             # when drizzle/ changed
 npm run deploy
 ```

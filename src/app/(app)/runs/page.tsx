@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireSignedIn } from "@/app/gate";
 import { recentRuns } from "@/lib/queries";
-import { Card, EmptyState, PageHeader, StatusPill, fmtCost, fmtDate, fmtDuration } from "@/components/ui";
+import { Card, EmptyState, PageHeader, StatusPill, fmtCost, fmtDate, fmtDuration, triggerLabel } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -47,7 +47,7 @@ export default async function RunsPage() {
                         "—"
                       )}
                     </td>
-                    <td className="text-ink-2">{r.trigger}</td>
+                    <td className="text-ink-2">{triggerLabel(r.trigger)}</td>
                     <td>
                       <StatusPill status={r.status} />
                     </td>
