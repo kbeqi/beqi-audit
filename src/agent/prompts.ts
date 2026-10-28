@@ -28,7 +28,8 @@ Designer tools (designer_tool, element_snapshot_tool, anything that needs an ope
 1. Site: data_sites_tool get_site for the site id in the task (custom domains, locales, last published).
 2. Pages: data_pages_tool list_pages (paginate to the end). Static pages that are not draft, archived, folders or collection templates are the audit population. Record each page's id, slug, publishedPath, seo.title, seo.description, openGraph.
 3. Webflow-side checks on the population: schema markup (data_pages_tool query_pages_schema_markup in batches of up to 100), sitemap flags (data_sitemap_tool list_pages_sitemap_status), site and page scripts and freeform code (data_scripts_tool get_site_scripts, get_registered_scripts, get_site_freeform_code, and get_page_scripts / get_page_freeform_code for key pages), assets (data_assets_tool list_assets, first 100: alt text, content type, size), CMS collections (data_cms_tool get_collection_list — count only).
-4. Live site with web_fetch: /robots.txt, /sitemap.xml, /llms.txt, then the homepage and the key pages listed in the task, then further pages from the sitemap until you reach the page budget. For each fetched page note: HTTP status, final URL, <title>, meta description, meta robots, canonical, html lang, og tags, headings (levels and text), images without alt, scripts in <head> (src, async/defer), JSON-LD blocks (parse them), internal links (collect for broken-link and orphan checks), approximate word count, FAQ-looking sections.
+4. Live site with web_fetch: robots.txt, sitemap.xml and llms.txt (their URLs are listed in the task), then the homepage and the key pages listed in the task, then further pages from the sitemap until you reach the page budget. For each fetched page note: HTTP status, final URL, <title>, meta description, meta robots, canonical, html lang, og tags, headings (levels and text), images without alt, scripts in <head> (src, async/defer), JSON-LD blocks (parse them), internal links (collect for broken-link and orphan checks), approximate word count, FAQ-looking sections.
+   web_fetch only opens URLs that already appear in the conversation: the task, a fetched page, the sitemap, or a Webflow result (a page's publishedPath joined to the base URL). Never guess a URL. Fetch at most 3 pages per turn; if a fetch fails with too_many_requests, continue with other work and retry that URL once later. Fetched content is truncated to the first part of the page; the head, headings and navigation are what you need.
 5. Links: for internal links collected from fetched pages, fetch any you have not seen yet (up to the link budget) and record the status. Treat 404/410 or failure as broken; 301/302 as redirects. Do not fetch external links unless the budget allows; prioritise internal ones.
 6. Evaluate every catalog check against the evidence. Severity defaults are in the catalog; lower a severity only with a clear reason (e.g. noindex on a thank-you page is info).
 7. Fix proposals: for findings whose catalog entry names a fix action other than manual, propose the exact change when you are confident it is correct and safe: full new title/description text (write good copy from the page's actual content, under the length limits), complete JSON-LD objects, the exact alt text, the heading level, the script id to remove. Set risk: low for metadata and alt text, medium for schema and sitemap flags, high for anything that changes visible content or removes scripts. Never propose a fix you have not got the target ids for.
@@ -94,6 +95,8 @@ export function auditTaskPrompt(opts: {
 }): string {
   const { site, clientName, agentId, pageBudget, linkBudget, previous } = opts;
   const host = new URL(site.baseUrl).host;
+  const base = site.baseUrl.replace(/\/$/, "");
+  const urls = ["/robots.txt", "/sitemap.xml", "/llms.txt", ...site.keyPages].map((p) => `${base}${p.startsWith("/") ? p : `/${p}`}`);
   const prev = previous.length
     ? `\n# Open findings from the previous audit\nRe-verify each of these specifically and report it again (same checkId, pagePath, subject) if it is still present, so resolved ones can be closed:\n${previous
         .slice(0, 150)
@@ -105,8 +108,10 @@ export function auditTaskPrompt(opts: {
 - Client: ${clientName}
 - Site name: ${site.name}
 - Webflow site id: ${site.webflowSiteId}
-- Live base URL: ${site.baseUrl} (host ${host}; web_fetch is limited to this host)
+- Live base URL: ${base} (host ${host}; web_fetch is limited to this host)
 - Key pages to always review: ${site.keyPages.join(", ")}
+- URLs available to web_fetch from the start:
+${urls.map((u) => `  - ${u}`).join("\n")}
 - Page budget: fetch at most ${pageBudget} pages' HTML. Link budget: at most ${linkBudget} extra link checks.
 - agent_id for every Webflow call: ${agentId}
 ${prev}

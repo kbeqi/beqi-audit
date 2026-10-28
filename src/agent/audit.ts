@@ -14,6 +14,11 @@ import { AUDIT_TOOLS, actionsOfToolCall, describeToolCall, isWriteAction, webflo
 
 const MAX_CONTINUATIONS = 12;
 const WEB_FETCH_MAX_USES = 60;
+// Each fetched page stays in the conversation for every later turn, so the
+// per-fetch cap is the main cost lever. 12K tokens covers a marketing page's
+// head, headings, links and copy; what is cut is mostly markup.
+const WEB_FETCH_MAX_CONTENT_TOKENS = 12_000;
+const PAGE_BUDGET_CAP = 40;
 
 export type AgentEnv = Pick<CloudflareEnv, "ANTHROPIC_API_KEY" | "WEBFLOW_MCP_URL">;
 
@@ -43,7 +48,7 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
   const usage = emptyUsage();
   const agentId = `${MODEL}|${AGENT_HARNESS}|${runId.slice(-6)}`;
   const host = new URL(site.baseUrl).host;
-  const pageBudget = Math.min(site.maxPages, 60);
+  const pageBudget = Math.min(site.maxPages, PAGE_BUDGET_CAP);
 
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     { role: "user", content: auditTaskPrompt({ site, clientName, agentId, pageBudget, linkBudget: 40, previous }) },
@@ -65,7 +70,7 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
       mcp_servers: [webflowMcpServer(connection, env)],
       tools: [
         webflowToolset(AUDIT_TOOLS),
-        { type: "web_fetch_20260209", name: "web_fetch", max_uses: WEB_FETCH_MAX_USES, allowed_domains: [host] },
+        { type: "web_fetch_20260209", name: "web_fetch", max_uses: WEB_FETCH_MAX_USES, allowed_domains: [host], max_content_tokens: WEB_FETCH_MAX_CONTENT_TOKENS },
       ],
       messages,
     });

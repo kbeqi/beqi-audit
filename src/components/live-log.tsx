@@ -26,6 +26,9 @@ export function LiveLog({ streamId, initial, live, compact = false }: { streamId
   const bottom = useRef<HTMLDivElement>(null);
   const lastSeq = events.length ? events[events.length - 1].seq : 0;
 
+  // The header (status pill, timings) is server-rendered: refresh it when the
+  // stream first produces events, every ~30 s while live, and at the end.
+  const ticks = useRef(0);
   useEffect(() => {
     if (!polling) return;
     let cancelled = false;
@@ -35,10 +38,14 @@ export function LiveLog({ streamId, initial, live, compact = false }: { streamId
         if (!res.ok) return;
         const data = (await res.json()) as { events: Ev[]; live: boolean };
         if (cancelled) return;
+        const first = data.events.length > 0 && lastSeq === 0;
         if (data.events.length) setEvents((prev) => [...prev, ...data.events]);
         const terminal = data.events.some((e) => e.kind === "done" || e.kind === "error");
+        ticks.current += 1;
         if (terminal || !data.live) {
           setPolling(false);
+          router.refresh();
+        } else if (first || ticks.current % 10 === 0) {
           router.refresh();
         }
       } catch {
