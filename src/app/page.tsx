@@ -173,14 +173,22 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                             )}
                           </td>
                           <td className="whitespace-nowrap text-ink-2">
-                            {s.running ? <StatusPill status="running" /> : s.latest ? timeAgo(s.latest.finishedAt) : "—"}
+                            {s.running ? (
+                              <Link href={`/runs/${s.running}`}>
+                                <StatusPill status="running" />
+                              </Link>
+                            ) : s.latest ? (
+                              timeAgo(s.latest.finishedAt)
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td className="whitespace-nowrap text-ink-2">{s.site.auditFrequency === "off" ? "manual" : fmtDay(s.site.nextRunAt)}</td>
                           <td className="text-right">
                             <form action={runNow}>
                               <input type="hidden" name="siteId" value={s.site.id} />
-                              <button className={`${btnSecondary} !py-1 !text-xs`} disabled={!s.site.connectionId || s.running}>
-                                Audit now
+                              <button className={`${s.latest ? btnSecondary : btnPrimary} !py-1 !text-xs`} disabled={!s.site.connectionId || !!s.running}>
+                                {s.running ? "Running…" : s.latest ? "Audit now" : "Run first audit"}
                               </button>
                             </form>
                           </td>
@@ -255,6 +263,8 @@ function humanAction(action: string): string {
     "webflow.connect_failed": "Webflow connection failed",
     "webflow.sites_imported": "Sites imported from Webflow",
     "webflow.import_failed": "Site import from Webflow failed",
+    "client.deleted": "Client deleted",
+    "action.error": "An action failed (details in the log)",
     "webflow.disconnected": "Webflow workspace disconnected",
     "run.started": "Audit started",
     "site.settings_updated": "Site settings changed",

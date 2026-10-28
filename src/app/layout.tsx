@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 import { Nav } from "@/components/nav";
 import { currentActorOrNull, isUnprotected } from "@/lib/auth";
-import { pendingFixesAcrossPortfolio } from "@/lib/queries";
+import { pendingFixCount } from "@/lib/queries";
 
 export const metadata: Metadata = {
   title: { default: "Beqi Audit", template: "%s · Beqi Audit" },
@@ -24,7 +24,7 @@ function Mark() {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const actor = await currentActorOrNull();
   const open = await isUnprotected();
-  const pending = actor ? (await pendingFixesAcrossPortfolio()).length : 0;
+  const pending = actor ? await pendingFixCount() : 0;
 
   return (
     <html lang="en" className="h-full antialiased">

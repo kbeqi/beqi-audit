@@ -17,6 +17,9 @@ export async function applyProposal(env: RunEnv, proposalId: string): Promise<vo
   if (proposal.status !== "approved" && proposal.status !== "applying") {
     throw new Error(`proposal ${proposalId} is ${proposal.status}, not approved`);
   }
+  // A second Workflow instance for the same proposal (retry after a crash, or
+  // a race) must not write again once a result exists.
+  if (proposal.result && proposal.result.status === "applied") return;
   const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, proposal.siteId) });
   if (!site) throw new Error("site not found");
   const connection = site.connectionId

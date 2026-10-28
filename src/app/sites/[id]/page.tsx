@@ -11,9 +11,9 @@ import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
-export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string }> }) {
+export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string; saved?: string }> }) {
   const { id } = await params;
-  const { sev } = await searchParams;
+  const { sev, saved } = await searchParams;
   const data = await siteDetail(id);
   if (!data) notFound();
   const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules } = data;
@@ -46,14 +46,28 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             <form action={runNow}>
               <input type="hidden" name="siteId" value={site.id} />
               <button className={btnPrimary} disabled={!connection || !!running}>
-                {running ? "Audit running" : "Run audit now"}
+                {running ? "Audit running" : latest ? "Run audit now" : "Run first audit"}
               </button>
             </form>
           </>
         }
       />
 
-      {!connection && <Notice tone="warn">This site has no active Webflow connection. Reconnect the client&apos;s workspace to audit it.</Notice>}
+      {saved && <Notice tone="good">Settings saved.</Notice>}
+      {!connection && (
+        <Notice tone="warn">
+          This site has no active Webflow connection.{" "}
+          <Link href={`/clients/${client.id}`} className="font-medium underline">
+            Reconnect the workspace
+          </Link>{" "}
+          to audit it.
+        </Notice>
+      )}
+      {connection && !latest && !running && (
+        <Notice tone="accent">
+          <strong>Ready for its first audit.</strong> Claude reviews up to {site.maxPages} pages through Webflow and the live site; expect 5–10 minutes. Nothing is changed on the site during an audit.
+        </Notice>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
         <Card className="flex items-center gap-5 px-6 py-5">

@@ -5,7 +5,8 @@ import { FindingsList } from "@/components/findings";
 import { LiveLog } from "@/components/live-log";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
-import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, fmtCost, fmtDate, fmtDuration, fmtNumber } from "@/components/ui";
+import { runNow } from "@/app/actions";
+import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber } from "@/components/ui";
 import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
@@ -40,8 +41,22 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         actions={run.status === "complete" ? <ScoreRing score={run.scoreOverall} size="lg" /> : undefined}
       />
 
-      {run.error && <Notice tone="critical">Audit failed: {run.error}</Notice>}
-      {live && <Notice tone="accent">Claude is auditing the site through Webflow&apos;s MCP server and the live URL. This page updates as it works.</Notice>}
+      {run.error && (
+        <Notice tone="critical">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="min-w-0 break-words">Audit failed: {run.error}</span>
+            <form action={runNow}>
+              <input type="hidden" name="siteId" value={site.id} />
+              <button className={`${btnSecondary} ${btnSm}`}>Run again</button>
+            </form>
+          </div>
+        </Notice>
+      )}
+      {live && (
+        <Notice tone="accent">
+          Claude is auditing the site through Webflow&apos;s MCP server and the live URL — reading only, nothing is changed. Audits usually take 5–10 minutes; this page updates as it works, and you can leave and come back.
+        </Notice>
+      )}
 
       <Card>
         <CardHeader title="Agent activity" description={live ? "Live" : `${events.length} events`} />

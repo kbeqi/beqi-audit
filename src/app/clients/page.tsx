@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { dashboardData } from "@/lib/queries";
-import { Card, CardHeader, EmptyState, PageHeader, ScoreRing, btnPrimary, hostOf } from "@/components/ui";
+import { Card, CardHeader, EmptyState, Notice, PageHeader, ScoreRing, btnPrimary, hostOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientsPage() {
+export default async function ClientsPage({ searchParams }: { searchParams: Promise<{ deleted?: string }> }) {
+  const { deleted } = await searchParams;
   const clients = await dashboardData();
   return (
     <div className="space-y-6">
@@ -17,6 +18,7 @@ export default async function ClientsPage() {
           </Link>
         }
       />
+      {deleted && <Notice tone="good">Deleted “{deleted}” and all of its audit history.</Notice>}
       {clients.length === 0 ? (
         <Card>
           <EmptyState title="No clients yet" />

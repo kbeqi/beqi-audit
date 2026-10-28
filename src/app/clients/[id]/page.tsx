@@ -1,18 +1,22 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { clientDetail } from "@/lib/queries";
-import { disconnectWorkspace, reimportSites, runNow, updateClient } from "@/app/actions";
+import { deleteClient, disconnectWorkspace, reimportSites, runNow, updateClient } from "@/app/actions";
+import { ConfirmButton } from "@/components/confirm-button";
 import { Card, CardHeader, CountPill, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnDanger, btnPrimary, btnSecondary, btnSm, fmtDay, hostOf, inputCls, labelCls, timeAgo } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-export default async function ClientPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ connected?: string; error?: string }> }) {
+type Search = { connected?: string; imported?: string; saved?: string; error?: string };
+
+export default async function ClientPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Search> }) {
   const { id } = await params;
-  const { connected, error } = await searchParams;
+  const { connected, imported, saved, error } = await searchParams;
   const data = await clientDetail(id);
   if (!data) notFound();
   const { client, sites, connections } = data;
   const active = connections.filter((c) => !c.revokedAt);
+  const firstSite = sites[0];
 
   return (
     <div className="space-y-6">
@@ -30,15 +34,31 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
 
       {connected && (
         <Notice tone="good">
-          Connected. {connected} site{connected === "1" ? "" : "s"} imported and scheduled for a weekly audit. Run one now from a site row to see results today.
+          Connected and {connected} site{connected === "1" ? "" : "s"} imported, each scheduled for a weekly audit.{" "}
+          {firstSite && (
+            <>
+              <Link href={`/sites/${firstSite.site.id}`} className="font-medium underline">
+                Open {firstSite.site.name}
+              </Link>{" "}
+              and run the first audit now.
+            </>
+          )}
         </Notice>
       )}
+      {imported && <Notice tone="good">Site list refreshed from Webflow.</Notice>}
+      {saved && <Notice tone="good">Client details saved.</Notice>}
       {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
+
+      {active.length === 0 && (
+        <Notice tone="accent">
+          <strong>Next step:</strong> connect the client&apos;s Webflow workspace. You authorize it once with your own Webflow login; every site in the workspace is imported automatically.
+        </Notice>
+      )}
 
       <Card>
         <CardHeader title="Sites" count={sites.length} />
         {sites.length === 0 ? (
-          <EmptyState title="No sites yet" body="Sites are imported automatically when a workspace is connected." />
+          <EmptyState title="No sites yet" body={active.length ? "The connected workspace returned no sites. Use “Re-import sites” below after adding one in Webflow." : "Sites are imported automatically when a workspace is connected."} />
         ) : (
           <div className="overflow-x-auto">
             <table className="data-table w-full text-sm">
@@ -77,17 +97,26 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                         <CountPill n={s.openBySeverity.high} tone="serious" label="high" />
                         <CountPill n={s.openBySeverity.medium} tone="warn" label="medium" />
                         {s.latest && s.openFindings === 0 && <span className="text-xs text-good">Clean</span>}
+                        {!s.latest && <span className="text-xs text-ink-3">not audited yet</span>}
                       </div>
                     </td>
                     <td className="text-ink-2">
                       {s.site.auditFrequency === "off" ? "manual" : `${s.site.auditFrequency} · ${fmtDay(s.site.nextRunAt)}`}
                     </td>
-                    <td className="whitespace-nowrap text-ink-2">{s.running ? <StatusPill status="running" /> : timeAgo(s.latest?.finishedAt)}</td>
+                    <td className="whitespace-nowrap text-ink-2">
+                      {s.running ? (
+                        <Link href={`/runs/${s.running}`}>
+                          <StatusPill status="running" />
+                        </Link>
+                      ) : (
+                        timeAgo(s.latest?.finishedAt)
+                      )}
+                    </td>
                     <td className="text-right">
                       <form action={runNow}>
                         <input type="hidden" name="siteId" value={s.site.id} />
-                        <button className={`${btnSecondary} ${btnSm}`} disabled={!s.site.connectionId || s.running}>
-                          Audit now
+                        <button className={`${s.latest ? btnSecondary : btnPrimary} ${btnSm}`} disabled={!s.site.connectionId || !!s.running}>
+                          {s.running ? "Running…" : s.latest ? "Audit now" : "Run first audit"}
                         </button>
                       </form>
                     </td>
@@ -107,7 +136,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
           ) : (
             <ul className="divide-y divide-line">
               {connections.map((c) => (
-                <li key={c.id} className="flex items-start justify-between gap-3 px-5 py-3 text-sm">
+                <li key={c.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3 text-sm">
                   <div className="min-w-0">
                     <div className="font-medium text-ink">{c.label ?? c.workspaceName ?? "Workspace"}</div>
                     <div className="text-xs text-ink-3">
@@ -127,7 +156,9 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                       <form action={disconnectWorkspace}>
                         <input type="hidden" name="connectionId" value={c.id} />
                         <input type="hidden" name="clientId" value={client.id} />
-                        <button className={`${btnDanger} ${btnSm}`}>Disconnect</button>
+                        <ConfirmButton message="Disconnect this workspace? Its sites stay in the app but cannot be audited until reconnected." className={`${btnDanger} ${btnSm}`}>
+                          Disconnect
+                        </ConfirmButton>
                       </form>
                     </div>
                   )}
@@ -155,6 +186,18 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
             </div>
             <button className={btnSecondary}>Save</button>
           </form>
+          <div className="border-t border-line px-5 py-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Danger zone</div>
+            <p className="mt-1 text-sm text-ink-2">
+              Deleting the client removes its {sites.length} site{sites.length === 1 ? "" : "s"}, every audit, finding and fix proposal, and its Webflow connections. Nothing is changed in Webflow.
+            </p>
+            <form action={deleteClient} className="mt-3">
+              <input type="hidden" name="clientId" value={client.id} />
+              <ConfirmButton message={`Delete "${client.name}" and all of its audit history? This cannot be undone.`} className={btnDanger}>
+                Delete client
+              </ConfirmButton>
+            </form>
+          </div>
         </Card>
       </div>
     </div>

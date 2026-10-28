@@ -47,6 +47,8 @@ export async function startFix(env: CloudflareEnv, proposalId: string, waitUntil
   const workflow = workflowBinding(env);
   if (workflow) {
     try {
+      // Instance ids are unique per Workflow; a retry of the same proposal gets
+      // a fresh id while the status guard in decideProposal prevents doubles.
       await workflow.create({ id: `fix-${proposalId}-${Date.now().toString(36)}`, params: { kind: "fix", proposalId } });
       return { mode: "workflow" };
     } catch (e) {
