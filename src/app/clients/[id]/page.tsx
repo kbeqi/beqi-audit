@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { clientDetail } from "@/lib/queries";
-import { disconnectWorkspace, runNow, updateClient } from "@/app/actions";
+import { disconnectWorkspace, reimportSites, runNow, updateClient } from "@/app/actions";
 import { Card, CardHeader, CountPill, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnDanger, btnPrimary, btnSecondary, btnSm, fmtDay, hostOf, inputCls, labelCls, timeAgo } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -116,11 +116,20 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                     </div>
                   </div>
                   {!c.revokedAt && (
-                    <form action={disconnectWorkspace}>
-                      <input type="hidden" name="connectionId" value={c.id} />
-                      <input type="hidden" name="clientId" value={client.id} />
-                      <button className={`${btnDanger} ${btnSm}`}>Disconnect</button>
-                    </form>
+                    <div className="flex shrink-0 gap-1.5">
+                      <form action={reimportSites}>
+                        <input type="hidden" name="connectionId" value={c.id} />
+                        <input type="hidden" name="clientId" value={client.id} />
+                        <button className={`${btnSecondary} ${btnSm}`} title="Read the workspace's site list again">
+                          Re-import sites
+                        </button>
+                      </form>
+                      <form action={disconnectWorkspace}>
+                        <input type="hidden" name="connectionId" value={c.id} />
+                        <input type="hidden" name="clientId" value={client.id} />
+                        <button className={`${btnDanger} ${btnSm}`}>Disconnect</button>
+                      </form>
+                    </div>
                   )}
                 </li>
               ))}

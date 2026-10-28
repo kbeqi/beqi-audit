@@ -2,12 +2,15 @@
 
 import { and, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { revalidatePath } from "next/cache";
 import { getDb, schema } from "@/db";
 import type { AuditFrequency } from "@/db/schema";
 import { currentActor } from "@/lib/auth";
 import { getCtx } from "@/lib/env";
 import { newId, nowIso, slugify } from "@/lib/id";
+import { importSitesForConnection } from "@/lib/webflow/import";
+import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startFix, startRun } from "@/audit/start";
 
 async function log(action: string, detail: Record<string, unknown>, siteId?: string | null) {
@@ -143,6 +146,30 @@ export async function decideProposal(formData: FormData) {
   }
   revalidatePath(back);
   redirect(back);
+}
+
+// Re-reads the sites a connection can see (after a failed import, or when the
+// workspace gained sites).
+export async function reimportSites(formData: FormData) {
+  const actor = await currentActor();
+  const id = String(formData.get("connectionId"));
+  const clientId = String(formData.get("clientId"));
+  const db = await getDb();
+  const { env } = await getCtx();
+  const connection = await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, id) });
+  if (!connection || connection.revokedAt) throw new Error("Connection not found");
+  try {
+    const fresh = await ensureFreshConnection(env, connection);
+    const { imported } = await importSitesForConnection(db, fresh, env);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId: id, sites: imported } });
+    revalidatePath(`/clients/${clientId}`);
+    redirect(`/clients/${clientId}?connected=${imported}`);
+  } catch (e) {
+    if (isRedirectError(e)) throw e;
+    const message = (e as Error).message ?? String(e);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId: id, error: message.slice(0, 500) } });
+    redirect(`/clients/${clientId}?error=${encodeURIComponent(message.slice(0, 200))}`);
+  }
 }
 
 export async function disconnectWorkspace(formData: FormData) {

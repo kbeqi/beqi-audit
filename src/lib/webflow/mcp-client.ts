@@ -1,6 +1,10 @@
 // Direct calls to Webflow's MCP server from the Worker (no model involved), for
 // the few things the app does itself: importing a workspace's sites after it
 // connects and testing a connection.
+//
+// Protocol: every Webflow tool call carries session_id, agent_id and context.
+// The first call of a session must be webflow_guide_tool with session_id
+// "start"; its reply issues a `ses_...` id that every later call must send.
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -20,40 +24,62 @@ interface ToolResult {
   isError?: boolean;
 }
 
-export async function callWebflowTool(opts: { serverUrl: string; token: string; name: string; args: Record<string, unknown> }): Promise<string> {
-  const transport = new StreamableHTTPClientTransport(new URL(opts.serverUrl), {
-    requestInit: { headers: { authorization: `Bearer ${opts.token}` } },
-  });
-  const client = new Client({ name: "beqi-audit", version: "0.2.0" });
-  await client.connect(transport);
-  try {
-    const res = (await client.callTool({ name: opts.name, arguments: opts.args })) as ToolResult;
+const AGENT_ID = "beqi-audit|worker|import";
+
+export class WebflowSession {
+  private sessionId = "start";
+  private constructor(private readonly client: Client) {}
+
+  static async open(serverUrl: string, token: string): Promise<WebflowSession> {
+    const transport = new StreamableHTTPClientTransport(new URL(serverUrl), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    });
+    const client = new Client({ name: "beqi-audit", version: "0.2.0" });
+    await client.connect(transport);
+    const session = new WebflowSession(client);
+    const text = await session.call("webflow_guide_tool", {}, "Beqi Audit opens a Webflow MCP session before importing a workspace's sites.", true);
+    const issued = /ses_[0-9A-Za-z]{27}/.exec(text)?.[0];
+    if (!issued) throw new Error("Webflow's MCP server did not issue a session id");
+    session.sessionId = issued;
+    return session;
+  }
+
+  async call(name: string, args: Record<string, unknown>, context: string, allowNotice = false): Promise<string> {
+    const res = (await this.client.callTool({
+      name,
+      arguments: { ...args, session_id: this.sessionId, agent_id: AGENT_ID, context },
+    })) as ToolResult;
     const text = (res.content ?? [])
       .filter((c) => c.type === "text")
       .map((c) => c.text ?? "")
       .join("\n");
-    if (res.isError) throw new Error(`Webflow MCP ${opts.name} failed: ${text.slice(0, 300)}`);
+    if (res.isError && !allowNotice) throw new Error(`Webflow MCP ${name} failed: ${text.slice(0, 300)}`);
     return text;
-  } finally {
-    await client.close().catch(() => {});
+  }
+
+  async close(): Promise<void> {
+    await this.client.close().catch(() => {});
   }
 }
 
-// Every Webflow tool call carries these; "start" asks the server for a session.
-function protocolArgs(context: string) {
-  return { session_id: "start", agent_id: "beqi-audit|worker|import", context };
-}
-
 export async function listWebflowSites(serverUrl: string, token: string): Promise<McpSite[]> {
-  const text = await callWebflowTool({
-    serverUrl,
-    token,
-    name: "data_sites_tool",
-    args: { action: "list_sites", ...protocolArgs("Beqi Audit lists the workspace's sites right after a connection is authorized, so they can be imported.") },
-  });
-  const json = extractJson(text);
-  const sites = Array.isArray(json) ? json : ((json as { sites?: McpSite[] } | null)?.sites ?? []);
-  return (sites as McpSite[]).filter((s) => s && typeof s.id === "string");
+  const session = await WebflowSession.open(serverUrl, token);
+  try {
+    const text = await session.call(
+      "data_sites_tool",
+      { action: "list_sites" },
+      "Beqi Audit lists the workspace's sites right after a connection is authorized, so they can be imported.",
+    );
+    const json = extractJson(text);
+    const sites = Array.isArray(json) ? json : ((json as { sites?: McpSite[] } | null)?.sites ?? []);
+    const out = (sites as McpSite[]).filter((s) => s && typeof s.id === "string");
+    if (!out.length && !/\[\s*\]|"sites"\s*:\s*\[\s*\]/.test(text)) {
+      throw new Error(`Could not read the site list from Webflow: ${text.slice(0, 200)}`);
+    }
+    return out;
+  } finally {
+    await session.close();
+  }
 }
 
 // Tool results are text; the JSON payload may be preceded by a session notice.

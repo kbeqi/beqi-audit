@@ -253,6 +253,8 @@ function humanAction(action: string): string {
     "client.updated": "Client updated",
     "webflow.connected": "Webflow workspace connected",
     "webflow.connect_failed": "Webflow connection failed",
+    "webflow.sites_imported": "Sites imported from Webflow",
+    "webflow.import_failed": "Site import from Webflow failed",
     "webflow.disconnected": "Webflow workspace disconnected",
     "run.started": "Audit started",
     "site.settings_updated": "Site settings changed",

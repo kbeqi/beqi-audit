@@ -6,11 +6,12 @@ import { getEnv, appUrl } from "@/lib/env";
 import { currentActor } from "@/lib/auth";
 import { newId, nowIso } from "@/lib/id";
 import { PENDING_COOKIE, completeMcpAuthorization, decodePending, expiresAtFrom } from "@/lib/webflow/mcp-oauth";
-import { listWebflowSites, siteBaseUrl } from "@/lib/webflow/mcp-client";
-import { nextRunAfter } from "@/audit/start";
+import { importSitesForConnection } from "@/lib/webflow/import";
 
 // OAuth redirect target. Exchanges the code with Webflow's MCP server, records
-// the connection, and imports every site the token can see under the client.
+// the connection, then imports every site the token can see under the client.
+// The connection is saved before the import so an import problem never costs
+// the user their authorization; "Re-import sites" on the client page retries it.
 export async function GET(request: Request) {
   const env = await getEnv();
   const url = new URL(request.url);
@@ -30,16 +31,14 @@ export async function GET(request: Request) {
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
   if (!client) return NextResponse.redirect(`${appUrl(env, request)}/?error=client_not_found`);
 
+  let connectionId: string | null = null;
   try {
     const { tokens, clientInfo } = await completeMcpAuthorization({ pending, code });
-    const sites = await listWebflowSites(pending.serverUrl, tokens.access_token);
-
-    const connectionId = newId();
+    connectionId = newId();
     await db.insert(schema.webflowConnections).values({
       id: connectionId,
       clientId,
-      label: sites[0]?.workspaceId ? `Workspace ${sites[0].workspaceId.slice(-6)}` : "Webflow workspace",
-      workspaceId: sites[0]?.workspaceId ?? null,
+      label: "Webflow workspace",
       authKind: "mcp_oauth",
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? null,
@@ -48,43 +47,29 @@ export async function GET(request: Request) {
       mcpServerUrl: pending.serverUrl,
       mcpClientId: clientInfo?.client_id ?? pending.mcpClientId,
       mcpClientSecret: clientInfo?.client_secret ?? pending.mcpClientSecret,
-      authorizedSiteIds: sites.map((s) => s.id),
+      authorizedSiteIds: [],
       authorizedBy: actor,
     });
-
-    // Import sites. Existing rows (re-authorization) keep their settings and
-    // history and are re-pointed at the new connection.
-    let imported = 0;
-    for (const s of sites) {
-      const existing = await db.query.sites.findFirst({ where: eq(schema.sites.webflowSiteId, s.id) });
-      if (existing) {
-        await db.update(schema.sites).set({ connectionId, name: s.displayName, shortName: s.shortName, previewUrl: s.previewUrl ?? null }).where(eq(schema.sites.id, existing.id));
-      } else {
-        await db.insert(schema.sites).values({
-          id: newId(),
-          clientId,
-          connectionId,
-          webflowSiteId: s.id,
-          name: s.displayName,
-          shortName: s.shortName,
-          baseUrl: siteBaseUrl(s),
-          previewUrl: s.previewUrl ?? null,
-          auditFrequency: "weekly",
-          nextRunAt: nextRunAfter("weekly"),
-        });
-      }
-      imported++;
-    }
     await db.insert(schema.auditLog).values({
       id: newId(),
       actor,
       action: "webflow.connected",
-      detail: { clientId, connectionId, sites: imported, expiresAt: expiresAtFrom(tokens), at: nowIso() },
+      detail: { clientId, connectionId, expiresAt: expiresAtFrom(tokens), at: nowIso() },
     });
-    return NextResponse.redirect(`${back}?connected=${imported}`);
   } catch (e) {
     const message = (e as Error).message ?? String(e);
     await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.connect_failed", detail: { clientId, error: message.slice(0, 500) } });
     return NextResponse.redirect(`${back}?error=${encodeURIComponent(message.slice(0, 200))}`);
+  }
+
+  try {
+    const connection = (await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, connectionId) }))!;
+    const { imported } = await importSitesForConnection(db, connection, env);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId, sites: imported } });
+    return NextResponse.redirect(`${back}?connected=${imported}`);
+  } catch (e) {
+    const message = (e as Error).message ?? String(e);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId, error: message.slice(0, 500) } });
+    return NextResponse.redirect(`${back}?error=${encodeURIComponent(`Connected, but importing sites failed: ${message.slice(0, 160)}. Use "Re-import sites".`)}`);
   }
 }
