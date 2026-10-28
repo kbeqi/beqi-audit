@@ -30,6 +30,7 @@ export async function importSitesForConnection(db: Db, connection: WebflowConnec
         previewUrl: s.previewUrl ?? null,
         auditFrequency: "weekly",
         nextRunAt: nextRunAfter("weekly"),
+        maxPages: 40,
       });
     }
     imported++;
