@@ -9,7 +9,7 @@ export async function getCtx() {
   return getCloudflareContext({ async: true });
 }
 
-export function appUrl(env: CloudflareEnv, req?: Request): string {
+export function appUrl(env: Pick<CloudflareEnv, "APP_URL">, req?: Request): string {
   if (env.APP_URL && !env.APP_URL.includes("localhost")) return env.APP_URL.replace(/\/$/, "");
   if (req) return new URL(req.url).origin;
   return (env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");

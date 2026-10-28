@@ -1,88 +1,75 @@
+import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { getEnv, appUrl } from "@/lib/env";
 import { currentActor } from "@/lib/auth";
 import { newId, nowIso } from "@/lib/id";
-import { exchangeCode } from "@/lib/webflow/oauth";
-import { siteBaseUrl, webflow } from "@/lib/webflow/client";
-import { nextRunAfter } from "@/audit/start";
+import { PENDING_COOKIE, completeMcpAuthorization, decodePending, expiresAtFrom } from "@/lib/webflow/mcp-oauth";
+import { importSitesForConnection } from "@/lib/webflow/import";
 
-// OAuth redirect target. Exchanges the code, records the connection, imports
-// every authorized site under the client, and registers a site_publish webhook.
+// OAuth redirect target. Exchanges the code with Webflow's MCP server, records
+// the connection, then imports every site the token can see under the client.
+// The connection is saved before the import so an import problem never costs
+// the user their authorization; "Re-import sites" on the client page retries it.
 export async function GET(request: Request) {
   const env = await getEnv();
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const jar = await cookies();
-  const expected = jar.get("wf_oauth_state")?.value;
-  jar.delete("wf_oauth_state");
+  const pending = decodePending(jar.get(PENDING_COOKIE)?.value);
+  jar.delete(PENDING_COOKIE);
 
-  if (!code || !state || !expected || state !== expected) {
-    return NextResponse.redirect(`${appUrl(env, request)}/?error=oauth_state`);
+  if (!code || !state || !pending || state !== pending.state) {
+    return NextResponse.redirect(`${appUrl(env, request)}/?error=${encodeURIComponent("The Webflow authorization did not complete (state mismatch). Try again.")}`);
   }
-  if (!env.WEBFLOW_CLIENT_ID || !env.WEBFLOW_CLIENT_SECRET) {
-    return NextResponse.json({ error: "Webflow OAuth is not configured" }, { status: 500 });
-  }
-  const clientId = state.split(".")[0];
+  const clientId = pending.clientId;
+  const back = `${appUrl(env, request)}/clients/${clientId}`;
+  const actor = await currentActor();
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
-  if (!client) return NextResponse.redirect(`${appUrl(env, request)}/?error=unknown_client`);
+  if (!client) return NextResponse.redirect(`${appUrl(env, request)}/?error=client_not_found`);
 
-  const token = await exchangeCode({
-    clientId: env.WEBFLOW_CLIENT_ID,
-    clientSecret: env.WEBFLOW_CLIENT_SECRET,
-    code,
-    redirectUri: `${appUrl(env, request)}/api/webflow/callback`,
-  });
-  const info = await webflow.tokenInfo(token.access_token);
-  const sites = await webflow.listSites(token.access_token);
-  const actor = await currentActor();
-
-  const connectionId = newId();
-  await db.insert(schema.webflowConnections).values({
-    id: connectionId,
-    clientId: client.id,
-    workspaceId: info.authorization.authorizedTo.workspaceIds[0] ?? sites[0]?.workspaceId ?? null,
-    accessToken: token.access_token,
-    scopes: token.scope ?? "",
-    authorizedSiteIds: sites.map((s) => s.id),
-    authorizedBy: actor,
-  });
-
-  const webhookUrl = `${appUrl(env, request)}/api/webhooks/webflow`;
-  for (const s of sites) {
-    const existing = await db.query.sites.findFirst({ where: eq(schema.sites.webflowSiteId, s.id) });
-    if (existing) {
-      await db.update(schema.sites).set({ connectionId, name: s.displayName, shortName: s.shortName, baseUrl: siteBaseUrl(s), previewUrl: s.previewUrl ?? null }).where(eq(schema.sites.id, existing.id));
-    } else {
-      await db.insert(schema.sites).values({
-        id: newId(),
-        clientId: client.id,
-        connectionId,
-        webflowSiteId: s.id,
-        name: s.displayName,
-        shortName: s.shortName,
-        baseUrl: siteBaseUrl(s),
-        previewUrl: s.previewUrl ?? null,
-        auditFrequency: "weekly",
-        nextRunAt: nextRunAfter("weekly"),
-        keyPages: ["/"],
-      });
-    }
-    // Publish-triggered runs. Ignore failures (e.g. missing scope) — the schedule still works.
-    try {
-      const hooks = await webflow.listWebhooks(token.access_token, s.id);
-      if (!hooks.some((h) => h.triggerType === "site_publish" && h.url === webhookUrl)) {
-        await webflow.createWebhook(token.access_token, s.id, "site_publish", webhookUrl);
-      }
-    } catch (e) {
-      console.warn(`webhook registration failed for ${s.id}:`, (e as Error).message);
-    }
+  let connectionId: string | null = null;
+  try {
+    const { tokens, clientInfo } = await completeMcpAuthorization({ pending, code });
+    connectionId = newId();
+    await db.insert(schema.webflowConnections).values({
+      id: connectionId,
+      clientId,
+      label: "Webflow workspace",
+      authKind: "mcp_oauth",
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token ?? null,
+      expiresAt: expiresAtFrom(tokens),
+      scopes: tokens.scope ?? "",
+      mcpServerUrl: pending.serverUrl,
+      mcpClientId: clientInfo?.client_id ?? pending.mcpClientId,
+      mcpClientSecret: clientInfo?.client_secret ?? pending.mcpClientSecret,
+      authorizedSiteIds: [],
+      authorizedBy: actor,
+    });
+    await db.insert(schema.auditLog).values({
+      id: newId(),
+      actor,
+      action: "webflow.connected",
+      detail: { clientId, connectionId, expiresAt: expiresAtFrom(tokens), at: nowIso() },
+    });
+  } catch (e) {
+    const message = (e as Error).message ?? String(e);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.connect_failed", detail: { clientId, error: message.slice(0, 500) } });
+    return NextResponse.redirect(`${back}?error=${encodeURIComponent(message.slice(0, 200))}`);
   }
 
-  await db.insert(schema.auditLog).values({ id: newId(), siteId: null, actor, action: "webflow.connected", detail: { clientId: client.id, sites: sites.map((s) => s.id), at: nowIso() } });
-  return NextResponse.redirect(`${appUrl(env, request)}/clients/${client.id}?connected=${sites.length}`);
+  try {
+    const connection = (await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, connectionId) }))!;
+    const { imported } = await importSitesForConnection(db, connection, env);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId, sites: imported } });
+    return NextResponse.redirect(`${back}?connected=${imported}`);
+  } catch (e) {
+    const message = (e as Error).message ?? String(e);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId, error: message.slice(0, 500) } });
+    return NextResponse.redirect(`${back}?error=${encodeURIComponent(`Connected, but importing sites failed: ${message.slice(0, 160)}. Use "Re-import sites".`)}`);
+  }
 }

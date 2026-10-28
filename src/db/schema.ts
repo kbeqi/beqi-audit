@@ -6,16 +6,72 @@ import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-or
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
+export type UserRole = "admin" | "member";
+
+// Team members who may sign in. ADMIN_EMAILS (wrangler.jsonc) are admins even
+// without a row, so the first sign-in bootstraps the table.
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  role: text("role").$type<UserRole>().notNull().default("member"),
+  invitedBy: text("invited_by"),
+  lastLoginAt: text("last_login_at"),
+  disabledAt: text("disabled_at"),
+  createdAt: text("created_at").notNull().default(now),
+});
+
+// One-time sign-in links. Only the hash of the token is stored.
+export const loginTokens = sqliteTable(
+  "login_tokens",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: text("expires_at").notNull(),
+    usedAt: text("used_at"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("login_tokens_email_idx").on(t.email, t.createdAt)],
+);
+
+// Browser sessions, revocable server-side. The cookie holds the raw token.
+export const sessions = sqliteTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: text("expires_at").notNull(),
+    userAgent: text("user_agent"),
+    lastSeenAt: text("last_seen_at"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
 export const clients = sqliteTable("clients", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   notes: text("notes"),
+  // Where audit emails for this client go (one address, or several separated
+  // by commas). Empty means no emails.
+  notifyEmail: text("notify_email"),
+  // A reminder about a day before each scheduled audit.
+  notifyReminder: integer("notify_reminder", { mode: "boolean" }).notNull().default(true),
+  // Score, counts and highlights when an audit finishes.
+  notifyResults: integer("notify_results", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull().default(now),
 });
 
-// One row per Webflow OAuth grant. A client with sites in several workspaces
-// authorizes once per workspace, so a client can have several connections.
+export type ConnectionAuthKind = "mcp_oauth" | "api_token";
+
+// One row per authorization against Webflow's hosted MCP server. A Beqi team
+// member authorizes once per client workspace; the token is what Claude uses
+// (through the Anthropic MCP connector) to read and fix the client's sites.
 export const webflowConnections = sqliteTable(
   "webflow_connections",
   {
@@ -23,10 +79,20 @@ export const webflowConnections = sqliteTable(
     clientId: text("client_id")
       .notNull()
       .references(() => clients.id, { onDelete: "cascade" }),
+    label: text("label"),
     workspaceId: text("workspace_id"),
     workspaceName: text("workspace_name"),
+    authKind: text("auth_kind").$type<ConnectionAuthKind>().notNull().default("mcp_oauth"),
     accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+    expiresAt: text("expires_at"),
     scopes: text("scopes").notNull(),
+    // OAuth client registered dynamically with the MCP server (RFC 7591), kept so
+    // tokens can be refreshed without a new authorization.
+    mcpServerUrl: text("mcp_server_url"),
+    tokenEndpoint: text("token_endpoint"),
+    mcpClientId: text("mcp_client_id"),
+    mcpClientSecret: text("mcp_client_secret"),
     // JSON array of Webflow site ids this token was authorized for.
     authorizedSiteIds: text("authorized_site_ids", { mode: "json" }).$type<string[]>().notNull(),
     authorizedBy: text("authorized_by"),
@@ -56,6 +122,9 @@ export const sites = sqliteTable(
     previewUrl: text("preview_url"),
     auditFrequency: text("audit_frequency").$type<AuditFrequency>().notNull().default("weekly"),
     nextRunAt: text("next_run_at"),
+    // The next_run_at a reminder email was sent for, so each scheduled audit
+    // gets exactly one reminder.
+    reminderSentFor: text("reminder_sent_for"),
     lastRunId: text("last_run_id"),
     // JSON array of paths that get PageSpeed runs and screenshots, e.g. ["/", "/pricing"].
     keyPages: text("key_pages", { mode: "json" }).$type<string[]>().notNull().default(sql`'["/"]'`),
@@ -84,13 +153,26 @@ export type CategoryKey =
 export type CategoryScores = Partial<Record<CategoryKey, number>>;
 
 export interface RunSummary {
-  pagesCrawled: number;
+  pagesTotal: number;
+  pagesReviewed: number;
   findingsBySeverity: Record<Severity, number>;
   findingsByCategory: Record<CategoryKey, number>;
   newFindings: number;
   resolvedFindings: number;
-  // Snapshot kinds whose hash differs from the previous complete run.
-  changedSinceLastRun?: string[];
+  proposals: number;
+}
+
+// Token usage and cost of the agent calls behind a run.
+export interface RunUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  toolCalls: number;
+  webFetches: number;
+  apiCalls: number;
+  durationMs: number;
+  estimatedCostUsd: number;
 }
 
 export const runs = sqliteTable(
@@ -108,10 +190,35 @@ export const runs = sqliteTable(
     scoreOverall: integer("score_overall"),
     scores: text("scores", { mode: "json" }).$type<CategoryScores>(),
     summary: text("summary", { mode: "json" }).$type<RunSummary>(),
+    // The model that produced the audit and what it cost.
+    model: text("model"),
+    usage: text("usage", { mode: "json" }).$type<RunUsage>(),
+    // Claude's own narrative of the audit (markdown) and its top highlights.
+    agentSummary: text("agent_summary"),
+    highlights: text("highlights", { mode: "json" }).$type<string[]>(),
     error: text("error"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("runs_site_created_idx").on(t.siteId, t.createdAt)],
+);
+
+export type RunEventKind = "status" | "tool_call" | "tool_result" | "fetch" | "text" | "warning" | "error" | "done";
+
+// Live activity log of an agent stream (an audit run or a fix application),
+// written as the agent works so the UI can show progress.
+export const runEvents = sqliteTable(
+  "run_events",
+  {
+    id: text("id").primaryKey(),
+    // Audit run id or fix proposal id: whichever agent stream the event belongs to.
+    streamId: text("stream_id").notNull(),
+    seq: integer("seq").notNull(),
+    kind: text("kind").$type<RunEventKind>().notNull(),
+    title: text("title").notNull(),
+    detail: text("detail", { mode: "json" }).$type<Record<string, unknown>>(),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("run_events_stream_idx").on(t.streamId, t.seq)],
 );
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -215,7 +322,31 @@ export const snapshots = sqliteTable(
   (t) => [index("snapshots_site_kind_idx").on(t.siteId, t.kind, t.createdAt)],
 );
 
-export type ProposalStatus = "proposed" | "approved" | "applied" | "rejected" | "reverted" | "failed";
+export type ProposalStatus = "proposed" | "approved" | "applying" | "applied" | "rejected" | "reverted" | "failed";
+export type ProposalRisk = "low" | "medium" | "high";
+
+export interface ProposalChange {
+  field: string;
+  from: string | null;
+  to: string;
+}
+
+export interface ProposalTarget {
+  pageId: string | null;
+  pagePath: string | null;
+  assetId: string | null;
+  elementId: string | null;
+  scriptId: string | null;
+}
+
+// What the fix agent reported after applying a proposal.
+export interface ProposalResult {
+  status: "applied" | "skipped" | "failed";
+  summary: string;
+  changesMade: ProposalChange[];
+  verification: string;
+  needsPublish: boolean;
+}
 
 // Agent-drafted fixes. Nothing is written to Webflow until status is "approved".
 export const fixProposals = sqliteTable(
@@ -228,13 +359,18 @@ export const fixProposals = sqliteTable(
     findingId: text("finding_id").references(() => findings.id, { onDelete: "set null" }),
     fingerprint: text("fingerprint").notNull(),
     status: text("status").$type<ProposalStatus>().notNull().default("proposed"),
-    // e.g. "page_seo", "schema_markup", "sitemap_flag", "remove_script"
+    // One of the fix actions in src/agent/catalog.ts, e.g. "page_seo", "schema_markup".
     action: text("action").notNull(),
-    proposal: text("proposal", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    title: text("title"),
+    risk: text("risk").$type<ProposalRisk>(),
+    target: text("target", { mode: "json" }).$type<ProposalTarget>(),
+    proposal: text("proposal", { mode: "json" }).$type<{ changes: ProposalChange[] }>().notNull(),
     previous: text("previous", { mode: "json" }).$type<Record<string, unknown>>(),
     rationale: text("rationale"),
     approvedBy: text("approved_by"),
+    appliedBy: text("applied_by"),
     appliedAt: text("applied_at"),
+    result: text("result", { mode: "json" }).$type<ProposalResult>(),
     error: text("error"),
     createdAt: text("created_at").notNull().default(now),
   },
@@ -280,3 +416,6 @@ export type NewFinding = typeof findings.$inferInsert;
 export type WebflowConnection = typeof webflowConnections.$inferSelect;
 export type PageMetric = typeof pageMetrics.$inferSelect;
 export type FixProposal = typeof fixProposals.$inferSelect;
+export type RunEvent = typeof runEvents.$inferSelect;
+export type User = typeof users.$inferSelect;
+export type IgnoreRule = typeof ignoreRules.$inferSelect;

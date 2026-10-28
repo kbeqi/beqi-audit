@@ -1,152 +1,242 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { requireSignedIn } from "@/app/gate";
+import { currentActorOrNull } from "@/lib/auth";
 import { notFound } from "next/navigation";
+import { eq } from "drizzle-orm";
+import { getDb, schema } from "@/db";
+import type { Severity } from "@/db/schema";
 import { siteDetail } from "@/lib/queries";
 import { deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
 import { FindingsList } from "@/components/findings";
-import { Card, Delta, ScoreBadge, StatusPill, buttonCls, buttonSecondaryCls, fmtDate, inputCls } from "@/components/ui";
-import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
+import { SubmitButton } from "@/components/submit-button";
+import { Markdown } from "@/components/markdown";
+import { ProposalRow } from "@/components/proposals";
+import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, scoreTone, timeAgo } from "@/components/ui";
+import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
-export default async function SitePage({ params }: { params: Promise<{ id: string }> }) {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  if (!(await currentActorOrNull())) return { title: "Sign in" };
+  const db = await getDb();
+  const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, id), columns: { name: true } });
+  return { title: site?.name ?? "Site" };
+}
+
+export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string; saved?: string }> }) {
+  const { id } = await params;
+  const { sev, saved } = await searchParams;
+  await requireSignedIn(`/sites/${id}`);
   const data = await siteDetail(id);
   if (!data) notFound();
-  const { site, client, runs, latest, findings, metrics, ignoreRules } = data;
-  const completed = runs.filter((r) => r.status === "complete");
-  const previous = completed[1] ?? null;
-  const latestMetrics = latest ? metrics.filter((m) => m.runId === latest.id) : [];
+  const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules } = data;
+  const running = runs.find((r) => r.status === "running" || r.status === "queued") ?? null;
+  const history = runs.filter((r) => r.status === "complete").map((r) => r.scoreOverall).reverse().slice(-12);
   const back = `/sites/${site.id}`;
+  const severity = (SEVERITY_ORDER as string[]).includes(sev ?? "") ? (sev as Severity) : "all";
+  const newFps = new Set(findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === latest?.id).map((f) => f.fingerprint));
+  const openProposals = proposals.filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying" || p.status === "failed");
+  const doneProposals = proposals.filter((p) => p.status === "applied" || p.status === "rejected").slice(0, 10);
+  const counts = Object.fromEntries(SEVERITY_ORDER.map((s) => [s, findings.filter((f) => f.severity === s).length])) as Record<Severity, number>;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-xs text-zinc-500">
-            <Link href={`/clients/${client.id}`} className="hover:underline">
-              {client.name}
-            </Link>
-          </div>
-          <h1 className="text-xl font-semibold">{site.name}</h1>
-          <a href={site.baseUrl} target="_blank" rel="noreferrer" className="text-sm text-sky-700 hover:underline">
-            {site.baseUrl}
+      <Crumbs items={[{ href: "/clients", label: "Clients" }, { href: `/clients/${client.id}`, label: client.name }, { label: site.name }]} />
+      <PageHeader
+        title={site.name}
+        description={
+          <a href={site.baseUrl} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+            {hostOf(site.baseUrl)}
           </a>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <ScoreBadge score={latest?.scoreOverall} size="lg" />
-            <div className="text-xs text-zinc-500">
-              <div>
-                <Delta now={latest?.scoreOverall} before={previous?.scoreOverall} /> vs previous
-              </div>
-              <div>last audit {fmtDate(latest?.finishedAt)}</div>
+        }
+        actions={
+          <>
+            {running && (
+              <Link href={`/runs/${running.id}`} className={btnSecondary}>
+                <StatusPill status={running.status} /> View progress
+              </Link>
+            )}
+            <form action={runNow}>
+              <input type="hidden" name="siteId" value={site.id} />
+              <SubmitButton className={btnPrimary} disabled={!connection || !!running} pendingLabel="Starting audit…">
+                {running ? "Audit running" : latest ? "Run audit now" : "Run first audit"}
+              </SubmitButton>
+            </form>
+          </>
+        }
+      />
+
+      {saved && <Notice tone="good">Settings saved.</Notice>}
+      {!connection && (
+        <Notice tone="warn">
+          This site has no active Webflow connection.{" "}
+          <Link href={`/clients/${client.id}`} className="font-medium underline">
+            Reconnect the workspace
+          </Link>{" "}
+          to audit it.
+        </Notice>
+      )}
+      {connection && !latest && !running && (
+        <Notice tone="accent">
+          <strong>Ready for its first audit.</strong> Claude reviews up to {site.maxPages} pages through Webflow and the live site; expect 5–10 minutes. Nothing is changed on the site during an audit.
+        </Notice>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
+        <Card className="flex items-center gap-5 px-6 py-5">
+          <ScoreRing score={latest?.scoreOverall} size="xl" />
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-ink-3">Overall score</div>
+            <div>
+              <Delta now={latest?.scoreOverall} before={previous?.scoreOverall} /> <span className="text-xs text-ink-3">vs previous audit</span>
             </div>
+            <div className="text-xs text-ink-3">Last audit {latest ? timeAgo(latest.finishedAt) : "—"}</div>
+            <div className="text-xs text-ink-3">Next {site.auditFrequency === "off" ? "manual only" : fmtDay(site.nextRunAt)}</div>
+            {history.length >= 2 && (
+              <div className="pt-1">
+                <Sparkline values={history} width={140} height={32} />
+              </div>
+            )}
           </div>
-          <form action={runNow}>
-            <input type="hidden" name="siteId" value={site.id} />
-            <button className={buttonCls} disabled={!site.connectionId}>
-              Run audit now
-            </button>
-          </form>
+        </Card>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {CATEGORY_ORDER.map((cat) => {
+            const score = latest?.scores?.[cat];
+            const tone = scoreTone(score);
+            return (
+              <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
+                  <Delta now={score} before={previous?.scores?.[cat]} />
+                </div>
+                <div className="mt-1 flex items-end justify-between">
+                  <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical" : "text-ink"}`}>{score ?? "–"}</div>
+                  <div className="text-xs text-ink-3 num">{latest?.summary?.findingsByCategory[cat] ?? 0} findings</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {!site.connectionId && <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">This site has no active Webflow connection. Reconnect the client&apos;s workspace to audit it.</div>}
-
-      {latest && (
-        <div className="grid gap-3 md:grid-cols-6">
-          {CATEGORY_ORDER.map((cat) => (
-            <Card key={cat} className="flex items-center justify-between !p-3">
-              <div>
-                <div className="text-xs text-zinc-500">{CATEGORY_LABELS[cat]}</div>
-                <div className="text-xs text-zinc-500">{latest.summary?.findingsByCategory[cat] ?? 0} findings</div>
+      {latest?.agentSummary && (
+        <Card>
+          <CardHeader
+            title="Claude's summary"
+            description={`From the audit on ${fmtDate(latest.finishedAt)} · ${latest.summary?.pagesReviewed ?? 0} of ${latest.summary?.pagesTotal ?? 0} pages reviewed · ${fmtDuration(latest.usage?.durationMs)} · ${fmtCost(latest.usage?.estimatedCostUsd)}`}
+            actions={
+              <Link href={`/runs/${latest.id}`} className="text-xs font-medium text-accent hover:underline">
+                Full run
+              </Link>
+            }
+          />
+          <div className="grid gap-5 p-5 lg:grid-cols-[1fr_18rem]">
+            <Markdown text={latest.agentSummary} />
+            {latest.highlights && latest.highlights.length > 0 && (
+              <div className="rounded-lg bg-surface-2 p-4">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Highlights</div>
+                <ul className="space-y-1.5 text-sm text-ink-2">
+                  {latest.highlights.map((h, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span aria-hidden className="text-accent">
+                        ▸
+                      </span>
+                      <span>{h}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <div className="flex items-center gap-1">
-                <ScoreBadge score={latest.scores?.[cat]} />
-                <Delta now={latest.scores?.[cat]} before={previous?.scores?.[cat]} />
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {latest?.summary && (
-        <Card className="text-sm text-zinc-700">
-          Crawled {latest.summary.pagesCrawled} pages · {latest.summary.newFindings} new, {latest.summary.resolvedFindings} resolved since the previous run
-          {latest.summary.changedSinceLastRun && latest.summary.changedSinceLastRun.length > 0 && (
-            <>
-              {" "}
-              · changed since last run: <span className="font-medium">{latest.summary.changedSinceLastRun.join(", ")}</span>
-            </>
-          )}
+            )}
+          </div>
         </Card>
       )}
 
-      {latestMetrics.length > 0 && (
-        <Card>
-          <h2 className="mb-2 text-sm font-semibold">Performance (PageSpeed Insights)</h2>
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="py-1 pr-3">Page</th>
-                <th className="py-1 pr-3">Device</th>
-                <th className="py-1 pr-3">Score</th>
-                <th className="py-1 pr-3">LCP</th>
-                <th className="py-1 pr-3">CLS</th>
-                <th className="py-1 pr-3">TBT</th>
-                <th className="py-1 pr-3">Weight</th>
-                <th className="py-1 pr-3">Field LCP / INP</th>
-              </tr>
-            </thead>
-            <tbody>
-              {latestMetrics.map((m) => (
-                <tr key={m.id} className="border-t border-zinc-100">
-                  <td className="py-1 pr-3 font-mono text-xs">{m.pagePath}</td>
-                  <td className="py-1 pr-3">{m.strategy}</td>
-                  <td className="py-1 pr-3">
-                    <ScoreBadge score={m.performanceScore} />
-                  </td>
-                  <td className="py-1 pr-3">{m.lcpMs != null ? `${(m.lcpMs / 1000).toFixed(1)}s` : "—"}</td>
-                  <td className="py-1 pr-3">{m.cls != null ? m.cls.toFixed(2) : "—"}</td>
-                  <td className="py-1 pr-3">{m.tbtMs != null ? `${Math.round(m.tbtMs)}ms` : "—"}</td>
-                  <td className="py-1 pr-3">{m.totalBytes != null ? `${(m.totalBytes / 1_000_000).toFixed(1)} MB` : "—"}</td>
-                  <td className="py-1 pr-3">
-                    {m.fieldLcpMs != null ? `${(m.fieldLcpMs / 1000).toFixed(1)}s` : "—"} / {m.fieldInpMs != null ? `${Math.round(m.fieldInpMs)}ms` : "—"}
-                  </td>
-                </tr>
+      <Card id="fixes">
+        <CardHeader title="Proposed fixes" count={openProposals.length} description="Nothing is written to Webflow until you approve it. Applied changes go live on the site's next publish." />
+        {openProposals.length === 0 ? (
+          <EmptyState title="No fixes waiting" body={latest ? "Claude found nothing it can safely fix automatically, or everything has been reviewed." : "Run an audit to get fix proposals."} />
+        ) : (
+          <ul className="divide-y divide-line">
+            {openProposals.map((p) => (
+              <ProposalRow key={p.id} proposal={p} back={`${back}#fixes`} />
+            ))}
+          </ul>
+        )}
+        {doneProposals.length > 0 && (
+          <details className="border-t border-line">
+            <summary className="px-5 py-2.5 text-xs font-medium text-ink-3 hover:text-ink">Recently applied or rejected ({doneProposals.length})</summary>
+            <ul className="divide-y divide-line border-t border-line">
+              {doneProposals.map((p) => (
+                <ProposalRow key={p.id} proposal={p} back={`${back}#fixes`} />
               ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+            </ul>
+          </details>
+        )}
+      </Card>
 
-      <section>
-        <h2 className="mb-2 text-base font-semibold">Open findings {latest && <span className="text-sm font-normal text-zinc-500">({findings.length}, from the latest audit)</span>}</h2>
-        {latest ? <FindingsList findings={findings} siteId={site.id} baseUrl={site.baseUrl} back={back} /> : <p className="text-sm text-zinc-500">No completed audit yet.</p>}
-      </section>
+      <Card>
+        <CardHeader
+          title="Open findings"
+          count={findings.length}
+          description={latest ? `From the latest audit · ${latest.summary?.newFindings ?? 0} new, ${latest.summary?.resolvedFindings ?? 0} resolved since the previous one` : undefined}
+          actions={
+            latest && (
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by severity">
+                {(["all", ...SEVERITY_ORDER] as const).map((s) => (
+                  <Link
+                    key={s}
+                    href={s === "all" ? back : `${back}?sev=${s}`}
+                    className={`rounded-md px-2 py-0.5 text-xs font-medium ${severity === s ? "bg-ink text-surface" : "text-ink-2 hover:bg-surface-2"}`}
+                    aria-current={severity === s ? "true" : undefined}
+                  >
+                    {s === "all" ? "All" : `${s} ${counts[s] ? counts[s] : ""}`.trim()}
+                  </Link>
+                ))}
+              </div>
+            )
+          }
+        />
+        {latest ? (
+          <FindingsList findings={findings} siteId={site.id} baseUrl={site.baseUrl} back={back} proposals={proposals} newFingerprints={newFps} severity={severity} />
+        ) : (
+          <EmptyState title="No completed audit yet" body="Run an audit to see findings." />
+        )}
+      </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <h2 className="mb-2 text-sm font-semibold">Runs</h2>
+          <CardHeader title="Audit history" count={runs.length} />
           {runs.length === 0 ? (
-            <p className="text-sm text-zinc-500">No runs yet.</p>
+            <EmptyState title="No audits yet" />
           ) : (
-            <table className="w-full text-sm">
+            <table className="data-table w-full text-sm">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Trigger</th>
+                  <th>Status</th>
+                  <th>Score</th>
+                  <th>Findings</th>
+                  <th>Cost</th>
+                </tr>
+              </thead>
               <tbody>
                 {runs.map((r) => (
-                  <tr key={r.id} className="border-t border-zinc-100">
-                    <td className="py-1 pr-3">
-                      <Link href={`/runs/${r.id}`} className="hover:underline">
+                  <tr key={r.id}>
+                    <td className="whitespace-nowrap">
+                      <Link href={`/runs/${r.id}`} className="text-ink hover:underline">
                         {fmtDate(r.createdAt)}
                       </Link>
                     </td>
-                    <td className="py-1 pr-3 text-zinc-600">{r.trigger}</td>
-                    <td className="py-1 pr-3">
+                    <td className="text-ink-2">{r.trigger}</td>
+                    <td>
                       <StatusPill status={r.status} />
                     </td>
-                    <td className="py-1 pr-3">
-                      <ScoreBadge score={r.scoreOverall} />
-                    </td>
+                    <td className="num">{r.scoreOverall ?? "—"}</td>
+                    <td className="num text-ink-2">{r.summary ? Object.values(r.summary.findingsBySeverity).reduce((a, b) => a + b, 0) : "—"}</td>
+                    <td className="num text-ink-2">{fmtCost(r.usage?.estimatedCostUsd)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -155,50 +245,59 @@ export default async function SitePage({ params }: { params: Promise<{ id: strin
         </Card>
 
         <Card>
-          <h2 className="mb-2 text-sm font-semibold">Settings</h2>
-          <form action={updateSiteSettings} className="space-y-3 text-sm">
+          <CardHeader title="Settings" />
+          <form action={updateSiteSettings} className="space-y-3 p-5 text-sm">
             <input type="hidden" name="siteId" value={site.id} />
-            <label className="block">
-              <span className="mb-1 block font-medium">Audit frequency</span>
-              <select name="auditFrequency" defaultValue={site.auditFrequency} className={inputCls}>
+            <div>
+              <label htmlFor="auditFrequency" className={labelCls}>
+                Audit schedule
+              </label>
+              <select id="auditFrequency" name="auditFrequency" defaultValue={site.auditFrequency} className={inputCls}>
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
                 <option value="monthly">Monthly</option>
-                <option value="off">Off (manual and publish-triggered only)</option>
+                <option value="off">Off (manual only)</option>
               </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block font-medium">Base URL</span>
-              <input name="baseUrl" defaultValue={site.baseUrl} className={inputCls} />
-            </label>
-            <label className="block">
-              <span className="mb-1 block font-medium">Key pages (PageSpeed runs; one per line, max 5)</span>
-              <textarea name="keyPages" rows={3} defaultValue={site.keyPages.join("\n")} className={inputCls} />
-            </label>
-            <label className="block">
-              <span className="mb-1 block font-medium">Max pages to crawl</span>
-              <input name="maxPages" type="number" min={10} max={1000} defaultValue={site.maxPages} className={inputCls} />
-            </label>
-            <label className="flex items-center gap-2">
+            </div>
+            <div>
+              <label htmlFor="baseUrl" className={labelCls}>
+                Live URL
+              </label>
+              <input id="baseUrl" name="baseUrl" defaultValue={site.baseUrl} className={inputCls} />
+            </div>
+            <div>
+              <label htmlFor="keyPages" className={labelCls}>
+                Key pages (always reviewed first; one per line)
+              </label>
+              <textarea id="keyPages" name="keyPages" rows={3} defaultValue={site.keyPages.join("\n")} className={inputCls} />
+            </div>
+            <div>
+              <label htmlFor="maxPages" className={labelCls}>
+                Pages to review per audit (5–200)
+              </label>
+              <input id="maxPages" name="maxPages" type="number" min={5} max={200} defaultValue={site.maxPages} className={inputCls} />
+              <p className="mt-1 text-xs text-ink-3">More pages means a longer, costlier audit. 40 covers most marketing sites.</p>
+            </div>
+            <label className="flex items-center gap-2 text-ink-2">
               <input name="isEnterprise" type="checkbox" defaultChecked={site.isEnterprise} />
-              <span>Enterprise plan (Analyze / AEO analytics available)</span>
+              Enterprise plan (Analyze / AEO analytics available)
             </label>
-            <button className={buttonSecondaryCls}>Save settings</button>
+            <SubmitButton className={btnSecondary} pendingLabel="Saving…">Save settings</SubmitButton>
           </form>
 
           {ignoreRules.length > 0 && (
-            <div className="mt-4">
-              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Ignore rules</h3>
-              <ul className="space-y-1 text-xs">
+            <div className="border-t border-line p-5">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Ignore rules</h3>
+              <ul className="space-y-1.5 text-xs">
                 {ignoreRules.map((r) => (
                   <li key={r.id} className="flex items-center justify-between gap-2">
-                    <span className="font-mono">
+                    <span className="font-mono text-ink-2">
                       {r.checkId} {r.pagePath ? `on ${r.pagePath}` : "(whole site)"}
                     </span>
                     <form action={deleteIgnoreRule}>
                       <input type="hidden" name="id" value={r.id} />
                       <input type="hidden" name="siteId" value={site.id} />
-                      <button className="text-red-700 hover:underline">remove</button>
+                      <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Removing…">Remove</SubmitButton>
                     </form>
                   </li>
                 ))}

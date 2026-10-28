@@ -14,13 +14,12 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply beqi-audit --local",
     "db:migrate:remote": "wrangler d1 migrations apply beqi-audit --remote",
-    "smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --alias:@=./src --outfile=.wrangler/tmp/smoke.mjs --log-level=warning && node .wrangler/tmp/smoke.mjs"
+    "test:links": "node scripts/check-links.mjs"
   },
   "dependencies": {
-    "@cloudflare/puppeteer": "^1.4.0",
-    "domutils": "^4.0.2",
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "drizzle-orm": "^0.45.4",
-    "htmlparser2": "^12.0.0",
     "next": "16.4.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",

@@ -1,24 +1,27 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getEnv, appUrl } from "@/lib/env";
-import { authorizeUrl } from "@/lib/webflow/oauth";
-import { newId } from "@/lib/id";
+import { currentActor } from "@/lib/auth";
+import { PENDING_COOKIE, beginMcpAuthorization, encodePending } from "@/lib/webflow/mcp-oauth";
 
 // GET /api/webflow/authorize?client=<clientId>
-// Sends the user to Webflow to grant the Beqi app access to one workspace or
-// a set of sites. The client id rides along in the OAuth state.
+// Sends a Beqi team member to Webflow to authorize the app's access to one
+// workspace through Webflow's MCP server. The client id rides along in the state.
 export async function GET(request: Request) {
+  await currentActor();
   const env = await getEnv();
   const url = new URL(request.url);
   const clientId = url.searchParams.get("client");
   if (!clientId) return NextResponse.json({ error: "client is required" }, { status: 400 });
-  if (!env.WEBFLOW_CLIENT_ID) return NextResponse.json({ error: "WEBFLOW_CLIENT_ID is not configured" }, { status: 500 });
 
-  const state = `${clientId}.${newId()}`;
-  const jar = await cookies();
-  jar.set("wf_oauth_state", state, { httpOnly: true, sameSite: "lax", secure: url.protocol === "https:", maxAge: 600, path: "/" });
-
-  return NextResponse.redirect(
-    authorizeUrl({ clientId: env.WEBFLOW_CLIENT_ID, redirectUri: `${appUrl(env, request)}/api/webflow/callback`, state }),
-  );
+  const redirectUri = `${appUrl(env, request)}/api/webflow/callback`;
+  try {
+    const { authorizationUrl, pending } = await beginMcpAuthorization(env, { clientId, redirectUri });
+    const jar = await cookies();
+    jar.set(PENDING_COOKIE, encodePending(pending), { httpOnly: true, sameSite: "lax", secure: url.protocol === "https:", maxAge: 600, path: "/" });
+    return NextResponse.redirect(authorizationUrl);
+  } catch (e) {
+    const message = (e as Error).message ?? String(e);
+    return NextResponse.redirect(`${appUrl(env, request)}/clients/${clientId}?error=${encodeURIComponent(message)}`);
+  }
 }

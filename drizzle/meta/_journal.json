@@ -8,6 +8,27 @@
       "when": 1793131889598,
       "tag": "0000_odd_union_jack",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793138555464,
+      "tag": "0001_ambitious_cerise",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793176811186,
+      "tag": "0002_vengeful_namora",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793181733242,
+      "tag": "0003_bright_maddog",
+      "breakpoints": true
     }
   ]
 }

@@ -1,12 +1,10 @@
-// Secrets and vars that `wrangler types` cannot see (set via `wrangler secret put`
-// or .dev.vars). Merged into the generated CloudflareEnv interface.
+// Secrets that `wrangler types` cannot see (set via `wrangler secret put` or
+// .dev.vars). Plain vars (APP_URL, WEBFLOW_MCP_URL, AUTH_MODE, EMAIL_FROM) come
+// from the generated cloudflare-env.d.ts.
 declare global {
   interface CloudflareEnv {
-    APP_URL: string;
-    WEBFLOW_CLIENT_ID?: string;
-    WEBFLOW_CLIENT_SECRET?: string;
-    PSI_API_KEY?: string;
     ANTHROPIC_API_KEY?: string;
+    RESEND_API_KEY?: string;
   }
 }
 
