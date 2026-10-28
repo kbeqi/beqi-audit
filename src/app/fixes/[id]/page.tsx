@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireSignedIn } from "@/app/gate";
+import { currentActorOrNull } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { proposalDetail } from "@/lib/queries";
 import { LiveLog } from "@/components/live-log";
@@ -12,6 +13,7 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  if (!(await currentActorOrNull())) return { title: "Sign in" };
   const data = await proposalDetail(id);
   return { title: data ? `${data.proposal.title ?? actionLabel(data.proposal.action)} · ${data.site.name}` : "Fix" };
 }

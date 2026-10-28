@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireSignedIn } from "@/app/gate";
+import { currentActorOrNull } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
@@ -18,6 +19,7 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  if (!(await currentActorOrNull())) return { title: "Sign in" };
   const db = await getDb();
   const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, id), columns: { siteId: true, status: true } });
   const site = run ? await db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId), columns: { name: true } }) : null;
