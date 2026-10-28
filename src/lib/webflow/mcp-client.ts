@@ -62,19 +62,30 @@ export class WebflowSession {
   }
 }
 
+// Webflow tools take `actions: [{ label, <action_name>: {...} }]` and answer with
+// `{ label, action, result }` per action (a single object for one action).
+interface ListSitesResult {
+  result?: { sites?: McpSite[]; pagination?: { hasMore?: boolean; returned?: number } };
+}
+
 export async function listWebflowSites(serverUrl: string, token: string): Promise<McpSite[]> {
   const session = await WebflowSession.open(serverUrl, token);
   try {
-    const text = await session.call(
-      "data_sites_tool",
-      { action: "list_sites" },
-      "Beqi Audit lists the workspace's sites right after a connection is authorized, so they can be imported.",
-    );
-    const json = extractJson(text);
-    const sites = Array.isArray(json) ? json : ((json as { sites?: McpSite[] } | null)?.sites ?? []);
-    const out = (sites as McpSite[]).filter((s) => s && typeof s.id === "string");
-    if (!out.length && !/\[\s*\]|"sites"\s*:\s*\[\s*\]/.test(text)) {
-      throw new Error(`Could not read the site list from Webflow: ${text.slice(0, 200)}`);
+    const out: McpSite[] = [];
+    let offset = 0;
+    for (let page = 0; page < 20; page++) {
+      const text = await session.call(
+        "data_sites_tool",
+        { actions: [{ label: "sites", list_sites: { detail: "full", limit: 50, offset } }] },
+        "Beqi Audit lists the workspace's sites right after a connection is authorized, so they can be imported.",
+      );
+      const json = extractJson(text);
+      const first = (Array.isArray(json) ? json[0] : json) as ListSitesResult | null;
+      const sites = first?.result?.sites;
+      if (!Array.isArray(sites)) throw new Error(`Could not read the site list from Webflow: ${text.slice(0, 200)}`);
+      out.push(...sites.filter((s) => s && typeof s.id === "string"));
+      if (!first?.result?.pagination?.hasMore || sites.length === 0) break;
+      offset += sites.length;
     }
     return out;
   } finally {
@@ -111,9 +122,11 @@ function extractJson(text: string): unknown {
   return null;
 }
 
-// Picks the URL the audit should use: first custom domain, else the webflow.io preview.
+// Picks the URL the audit should use: the www custom domain if there is one,
+// else the first custom domain, else the webflow.io preview.
 export function siteBaseUrl(site: McpSite): string {
-  const custom = site.customDomains?.[0]?.url;
+  const domains = (site.customDomains ?? []).map((d) => d.url).filter(Boolean);
+  const custom = domains.find((d) => d.startsWith("www.")) ?? domains[0];
   if (custom) return custom.startsWith("http") ? custom : `https://${custom}`;
   return `https://${site.shortName}.webflow.io`;
 }

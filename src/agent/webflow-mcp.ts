@@ -53,8 +53,9 @@ export function webflowToolset(): Anthropic.Beta.BetaMCPToolset {
 
 const READ_PREFIXES = ["get_", "list_", "query_", "search_", "read_", "check_", "guide"];
 
-// Action names inside a Webflow tool call. Tools take either `action` or a batch
-// of `actions[]` whose entries carry `type` or `action`.
+// Action names inside a Webflow tool call. Tools take `actions: [{ label,
+// <action_name>: {...} }]` (the action is the one key that isn't `label`); a
+// few older shapes carry `action` / `type` strings, handled for completeness.
 export function actionsOfToolCall(input: unknown): string[] {
   if (!input || typeof input !== "object") return [];
   const obj = input as Record<string, unknown>;
@@ -62,11 +63,11 @@ export function actionsOfToolCall(input: unknown): string[] {
   if (typeof obj.action === "string") out.push(obj.action);
   if (Array.isArray(obj.actions)) {
     for (const a of obj.actions) {
-      if (a && typeof a === "object") {
-        const rec = a as Record<string, unknown>;
-        const name = typeof rec.type === "string" ? rec.type : typeof rec.action === "string" ? rec.action : null;
-        if (name) out.push(name);
-      }
+      if (!a || typeof a !== "object") continue;
+      const rec = a as Record<string, unknown>;
+      if (typeof rec.type === "string") out.push(rec.type);
+      else if (typeof rec.action === "string") out.push(rec.action);
+      else out.push(...Object.keys(rec).filter((k) => k !== "label"));
     }
   }
   return out;
@@ -81,7 +82,9 @@ export function isWriteAction(toolName: string, action: string): boolean {
 export function describeToolCall(toolName: string, input: unknown): string {
   const actions = actionsOfToolCall(input);
   const obj = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const where = [obj.page_id ?? obj.pageId, obj.collection_id, obj.asset_id].find((v) => typeof v === "string") as string | undefined;
+  const firstAction = (Array.isArray(obj.actions) && obj.actions[0] && typeof obj.actions[0] === "object" ? obj.actions[0] : {}) as Record<string, unknown>;
+  const inner = (Object.entries(firstAction).find(([k, v]) => k !== "label" && v && typeof v === "object")?.[1] ?? {}) as Record<string, unknown>;
+  const where = [obj.page_id, obj.pageId, obj.siteId, inner.page_id, inner.site_id, inner.collection_id, inner.asset_id].find((v) => typeof v === "string") as string | undefined;
   const base = actions.length ? `${toolName} › ${actions.join(", ")}` : toolName;
   return where ? `${base} (${where})` : base;
 }
