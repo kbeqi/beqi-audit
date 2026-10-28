@@ -11,6 +11,13 @@ export const clients = sqliteTable("clients", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   notes: text("notes"),
+  // Where audit emails for this client go (one address, or several separated
+  // by commas). Empty means no emails.
+  notifyEmail: text("notify_email"),
+  // A reminder about a day before each scheduled audit.
+  notifyReminder: integer("notify_reminder", { mode: "boolean" }).notNull().default(true),
+  // Score, counts and highlights when an audit finishes.
+  notifyResults: integer("notify_results", { mode: "boolean" }).notNull().default(true),
   createdAt: text("created_at").notNull().default(now),
 });
 
@@ -69,6 +76,9 @@ export const sites = sqliteTable(
     previewUrl: text("preview_url"),
     auditFrequency: text("audit_frequency").$type<AuditFrequency>().notNull().default("weekly"),
     nextRunAt: text("next_run_at"),
+    // The next_run_at a reminder email was sent for, so each scheduled audit
+    // gets exactly one reminder.
+    reminderSentFor: text("reminder_sent_for"),
     lastRunId: text("last_run_id"),
     // JSON array of paths that get PageSpeed runs and screenshots, e.g. ["/", "/pricing"].
     keyPages: text("key_pages", { mode: "json" }).$type<string[]>().notNull().default(sql`'["/"]'`),

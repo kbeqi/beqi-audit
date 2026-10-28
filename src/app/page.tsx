@@ -3,6 +3,7 @@ import { dashboardData, pendingFixesAcrossPortfolio, recentActivity, recentRuns 
 import { ProposalRow } from "@/components/proposals";
 import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatTile, StatusPill, btnPrimary, btnSecondary, fmtDay, hostOf, timeAgo } from "@/components/ui";
 import { runNow } from "@/app/actions";
+import { SubmitButton } from "@/components/submit-button";
 
 export const dynamic = "force-dynamic";
 
@@ -187,9 +188,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                           <td className="text-right">
                             <form action={runNow}>
                               <input type="hidden" name="siteId" value={s.site.id} />
-                              <button className={`${s.latest ? btnSecondary : btnPrimary} !py-1 !text-xs`} disabled={!s.site.connectionId || !!s.running}>
+                              <SubmitButton className={`${s.latest ? btnSecondary : btnPrimary} !py-1 !text-xs`} disabled={!s.site.connectionId || !!s.running} pendingLabel="Starting…">
                                 {s.running ? "Running…" : s.latest ? "Audit now" : "Run first audit"}
-                              </button>
+                              </SubmitButton>
                             </form>
                           </td>
                         </tr>
@@ -264,6 +265,9 @@ function humanAction(action: string): string {
     "webflow.sites_imported": "Sites imported from Webflow",
     "webflow.import_failed": "Site import from Webflow failed",
     "client.deleted": "Client deleted",
+    "email.sent": "Email sent",
+    "email.skipped": "Email skipped (not configured)",
+    "email.failed": "Email failed",
     "action.error": "An action failed (details in the log)",
     "webflow.disconnected": "Webflow workspace disconnected",
     "run.started": "Audit started",

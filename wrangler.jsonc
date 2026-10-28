@@ -19,7 +19,10 @@
     // "access": only requests carrying Cloudflare Access's identity header are
     // served (fail closed). "open": no login; use only while Access is not yet in
     // front of the Worker. The UI shows a warning banner in open mode.
-    "AUTH_MODE": "open"
+    "AUTH_MODE": "open",
+    // Sender for client emails (reminders and results) through Resend; the
+    // domain must be verified in Resend. Requires the RESEND_API_KEY secret.
+    "EMAIL_FROM": "Beqi Audit <audit@beqi.co>"
   },
   "triggers": {
     // Scheduler tick: starts audit runs for every site whose next_run_at is due.

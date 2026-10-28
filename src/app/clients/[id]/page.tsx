@@ -1,17 +1,21 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { clientDetail } from "@/lib/queries";
-import { deleteClient, disconnectWorkspace, reimportSites, runNow, updateClient } from "@/app/actions";
+import { deleteClient, disconnectWorkspace, reimportSites, runNow, sendTestEmail, updateClient } from "@/app/actions";
+import { emailConfigured } from "@/lib/email";
+import { getEnv } from "@/lib/env";
 import { ConfirmButton } from "@/components/confirm-button";
+import { SubmitButton } from "@/components/submit-button";
 import { Card, CardHeader, CountPill, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnDanger, btnPrimary, btnSecondary, btnSm, fmtDay, hostOf, inputCls, labelCls, timeAgo } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-type Search = { connected?: string; imported?: string; saved?: string; error?: string };
+type Search = { connected?: string; imported?: string; saved?: string; error?: string; notice?: string };
 
 export default async function ClientPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Search> }) {
   const { id } = await params;
-  const { connected, imported, saved, error } = await searchParams;
+  const { connected, imported, saved, error, notice } = await searchParams;
+  const mailReady = emailConfigured(await getEnv());
   const data = await clientDetail(id);
   if (!data) notFound();
   const { client, sites, connections } = data;
@@ -47,6 +51,7 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
       )}
       {imported && <Notice tone="good">Site list refreshed from Webflow.</Notice>}
       {saved && <Notice tone="good">Client details saved.</Notice>}
+      {notice && <Notice tone="good">{decodeURIComponent(notice)}</Notice>}
       {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
 
       {active.length === 0 && (
@@ -115,9 +120,9 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                     <td className="text-right">
                       <form action={runNow}>
                         <input type="hidden" name="siteId" value={s.site.id} />
-                        <button className={`${s.latest ? btnSecondary : btnPrimary} ${btnSm}`} disabled={!s.site.connectionId || !!s.running}>
+                        <SubmitButton className={`${s.latest ? btnSecondary : btnPrimary} ${btnSm}`} disabled={!s.site.connectionId || !!s.running} pendingLabel="Starting…">
                           {s.running ? "Running…" : s.latest ? "Audit now" : "Run first audit"}
-                        </button>
+                        </SubmitButton>
                       </form>
                     </td>
                   </tr>
@@ -149,9 +154,9 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
                       <form action={reimportSites}>
                         <input type="hidden" name="connectionId" value={c.id} />
                         <input type="hidden" name="clientId" value={client.id} />
-                        <button className={`${btnSecondary} ${btnSm}`} title="Read the workspace's site list again">
+                        <SubmitButton className={`${btnSecondary} ${btnSm}`} title="Read the workspace's site list again" pendingLabel="Importing…">
                           Re-import sites
-                        </button>
+                        </SubmitButton>
                       </form>
                       <form action={disconnectWorkspace}>
                         <input type="hidden" name="connectionId" value={c.id} />
@@ -184,8 +189,48 @@ export default async function ClientPage({ params, searchParams }: { params: Pro
               </label>
               <textarea id="notes" name="notes" rows={3} defaultValue={client.notes ?? ""} className={inputCls} />
             </div>
-            <button className={btnSecondary}>Save</button>
+            <fieldset className="rounded-lg border border-line p-3">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Email notifications</legend>
+              <div>
+                <label htmlFor="notifyEmail" className={labelCls}>
+                  Send to
+                </label>
+                <input id="notifyEmail" name="notifyEmail" type="text" inputMode="email" defaultValue={client.notifyEmail ?? ""} placeholder="client@example.com, pm@beqi.co" className={inputCls} />
+                <p className="mt-1 text-xs text-ink-3">One or more addresses, separated by commas. Leave empty for no emails.</p>
+              </div>
+              <label className="mt-3 flex items-start gap-2 text-sm text-ink-2">
+                <input name="notifyReminder" type="checkbox" defaultChecked={client.notifyReminder} className="mt-0.5" />
+                <span>
+                  <span className="font-medium text-ink">Reminder before each scheduled audit</span>
+                  <span className="block text-xs text-ink-3">About a day ahead, saying when it runs and that nothing is changed on the site.</span>
+                </span>
+              </label>
+              <label className="mt-2 flex items-start gap-2 text-sm text-ink-2">
+                <input name="notifyResults" type="checkbox" defaultChecked={client.notifyResults} className="mt-0.5" />
+                <span>
+                  <span className="font-medium text-ink">Results when an audit finishes</span>
+                  <span className="block text-xs text-ink-3">Score, finding counts, highlights and a link to the full report.</span>
+                </span>
+              </label>
+              {!mailReady && <p className="mt-3 rounded-md px-2 py-1.5 text-xs tone-warn">Email sending isn&apos;t configured yet (RESEND_API_KEY / EMAIL_FROM). Settings are saved and used once it is.</p>}
+            </fieldset>
+            <SubmitButton className={btnSecondary} pendingLabel="Saving…">
+              Save
+            </SubmitButton>
           </form>
+          {client.notifyEmail && (
+            <form action={sendTestEmail} className="border-t border-line px-5 py-3">
+              <input type="hidden" name="clientId" value={client.id} />
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span className="text-ink-2">
+                  Emails go to <span className="font-medium text-ink">{client.notifyEmail}</span>
+                </span>
+                <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Sending…">
+                  Send test email
+                </SubmitButton>
+              </div>
+            </form>
+          )}
           <div className="border-t border-line px-5 py-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-ink-3">Danger zone</div>
             <p className="mt-1 text-sm text-ink-2">

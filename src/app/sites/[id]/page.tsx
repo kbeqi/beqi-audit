@@ -7,6 +7,7 @@ import type { Severity } from "@/db/schema";
 import { siteDetail } from "@/lib/queries";
 import { deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
 import { FindingsList } from "@/components/findings";
+import { SubmitButton } from "@/components/submit-button";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
 import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, scoreTone, timeAgo } from "@/components/ui";
@@ -55,9 +56,9 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             )}
             <form action={runNow}>
               <input type="hidden" name="siteId" value={site.id} />
-              <button className={btnPrimary} disabled={!connection || !!running}>
+              <SubmitButton className={btnPrimary} disabled={!connection || !!running} pendingLabel="Starting audit…">
                 {running ? "Audit running" : latest ? "Run audit now" : "Run first audit"}
-              </button>
+              </SubmitButton>
             </form>
           </>
         }
@@ -277,7 +278,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
               <input name="isEnterprise" type="checkbox" defaultChecked={site.isEnterprise} />
               Enterprise plan (Analyze / AEO analytics available)
             </label>
-            <button className={btnSecondary}>Save settings</button>
+            <SubmitButton className={btnSecondary} pendingLabel="Saving…">Save settings</SubmitButton>
           </form>
 
           {ignoreRules.length > 0 && (
@@ -292,7 +293,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                     <form action={deleteIgnoreRule}>
                       <input type="hidden" name="id" value={r.id} />
                       <input type="hidden" name="siteId" value={site.id} />
-                      <button className={`${btnSecondary} ${btnSm}`}>Remove</button>
+                      <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Removing…">Remove</SubmitButton>
                     </form>
                   </li>
                 ))}

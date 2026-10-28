@@ -1,4 +1,5 @@
 import { createClient } from "@/app/actions";
+import { SubmitButton } from "@/components/submit-button";
 import { Card, PageHeader, btnPrimary, inputCls, labelCls } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +22,7 @@ export default function NewClientPage() {
             </label>
             <textarea id="notes" name="notes" rows={3} className={inputCls} placeholder="Retainer scope, contacts, anything the team should know" />
           </div>
-          <button className={btnPrimary}>Create client</button>
+          <SubmitButton className={btnPrimary} pendingLabel="Creating…">Create client</SubmitButton>
         </form>
       </Card>
     </div>

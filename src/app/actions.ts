@@ -7,7 +7,8 @@ import { revalidatePath } from "next/cache";
 import { getDb, schema } from "@/db";
 import type { AuditFrequency } from "@/db/schema";
 import { currentActor } from "@/lib/auth";
-import { getCtx } from "@/lib/env";
+import { appUrl, getCtx } from "@/lib/env";
+import { parseRecipients, sendEmail, testEmail } from "@/lib/email";
 import { newId, nowIso, slugify } from "@/lib/id";
 import { importSitesForConnection } from "@/lib/webflow/import";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
@@ -61,11 +62,44 @@ export async function updateClient(formData: FormData) {
     const id = String(formData.get("clientId"));
     const name = String(formData.get("name") ?? "").trim();
     if (!name) throw new Error("Name is required");
+    const rawEmail = String(formData.get("notifyEmail") ?? "").trim();
+    const recipients = parseRecipients(rawEmail);
+    if (rawEmail && recipients.length === 0) redirect(`/clients/${id}?error=${encodeURIComponent("That notification email address doesn't look valid.")}`);
     const db = await getDb();
-    await db.update(schema.clients).set({ name, notes: String(formData.get("notes") ?? "") || null }).where(eq(schema.clients.id, id));
-    await log("client.updated", { clientId: id, name });
+    await db
+      .update(schema.clients)
+      .set({
+        name,
+        notes: String(formData.get("notes") ?? "") || null,
+        notifyEmail: recipients.length ? recipients.join(", ") : null,
+        notifyReminder: formData.get("notifyReminder") === "on",
+        notifyResults: formData.get("notifyResults") === "on",
+      })
+      .where(eq(schema.clients.id, id));
+    await log("client.updated", { clientId: id, name, notifyEmail: recipients });
     revalidatePath(`/clients/${id}`);
     redirect(`/clients/${id}?saved=1`);
+  });
+}
+
+export async function sendTestEmail(formData: FormData) {
+  return guarded("sendTestEmail", async () => {
+    await currentActor();
+    const id = String(formData.get("clientId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
+    if (!client) throw new Error("Client not found");
+    const to = parseRecipients(client.notifyEmail);
+    if (to.length === 0) redirect(`/clients/${id}?error=${encodeURIComponent("Save a notification email first.")}`);
+    const result = await sendEmail(env, "test", testEmail({ to, clientName: client.name, appUrl: appUrl(env) }));
+    const msg =
+      result === "sent"
+        ? `Test email sent to ${to.join(", ")}.`
+        : result === "skipped"
+          ? "Email isn't configured yet: set the RESEND_API_KEY secret and EMAIL_FROM in wrangler.jsonc."
+          : "The email provider rejected the message; details are in the activity log.";
+    redirect(`/clients/${id}?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
   });
 }
 

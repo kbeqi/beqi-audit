@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { CategoryKey, Finding, FixProposal, Severity } from "@/db/schema";
 import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
 import { ignoreFinding, markFindingState } from "@/app/actions";
+import { SubmitButton } from "./submit-button";
 import { SeverityPill, btnGhost, btnSm } from "./ui";
 
 const sevRank = Object.fromEntries(SEVERITY_ORDER.map((s, i) => [s, i])) as Record<Severity, number>;
@@ -117,18 +118,18 @@ function FindingRow({ f, siteId, baseUrl, back, proposals, isNew }: { f: Finding
               <input type="hidden" name="pagePath" value={f.pagePath ?? ""} />
               <input type="hidden" name="scope" value={f.pagePath ? "page" : "site"} />
               <input type="hidden" name="back" value={back} />
-              <button className={`${btnGhost} ${btnSm}`} title="Suppress this check on this page in future audits">
+              <SubmitButton className={`${btnGhost} ${btnSm}`} title="Suppress this check on this page in future audits" pendingLabel="Ignoring…">
                 Ignore
-              </button>
+              </SubmitButton>
             </form>
             <form action={markFindingState}>
               <input type="hidden" name="siteId" value={siteId} />
               <input type="hidden" name="fingerprint" value={f.fingerprint} />
               <input type="hidden" name="status" value="false_positive" />
               <input type="hidden" name="back" value={back} />
-              <button className={`${btnGhost} ${btnSm}`} title="Hide this finding; it stays hidden unless reopened">
+              <SubmitButton className={`${btnGhost} ${btnSm}`} title="Hide this finding; it stays hidden unless reopened" pendingLabel="Saving…">
                 Not an issue
-              </button>
+              </SubmitButton>
             </form>
           </div>
         )}

@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { FixProposal, Site } from "@/db/schema";
 import type { FixAction } from "@/agent/catalog";
 import { decideProposal } from "@/app/actions";
-import { ConfirmButton } from "./confirm-button";
+import { SubmitButton } from "./submit-button";
 import { ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
 
 export const ACTION_LABELS: Record<FixAction, string> = {
@@ -91,18 +91,18 @@ export function DecisionButtons({ proposal, back, size = "md" }: { proposal: Fix
         <input type="hidden" name="decision" value="apply" />
         <input type="hidden" name="back" value={back} />
         {risky ? (
-          <ConfirmButton message={`${ACTION_NOTES[proposal.action as FixAction] ?? "This change is marked as higher risk."}\n\nApply it now?`} className={`${btnPrimary} ${sm}`}>
+          <SubmitButton confirm={`${ACTION_NOTES[proposal.action as FixAction] ?? "This change is marked as higher risk."}\n\nApply it now?`} className={`${btnPrimary} ${sm}`} pendingLabel="Handing to Claude…">
             {applyLabel}
-          </ConfirmButton>
+          </SubmitButton>
         ) : (
-          <button className={`${btnPrimary} ${sm}`}>{applyLabel}</button>
+          <SubmitButton className={`${btnPrimary} ${sm}`} pendingLabel="Handing to Claude…">{applyLabel}</SubmitButton>
         )}
       </form>
       <form action={decideProposal}>
         <input type="hidden" name="proposalId" value={proposal.id} />
         <input type="hidden" name="decision" value="reject" />
         <input type="hidden" name="back" value={back} />
-        <button className={`${btnSecondary} ${sm}`}>Reject</button>
+        <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Rejecting…">Reject</SubmitButton>
       </form>
     </div>
   );

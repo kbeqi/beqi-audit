@@ -2,9 +2,11 @@
 // inline runner (local dev / fallback) both call these in order; each step
 // re-reads what it needs from D1 and KV so it can be retried on its own.
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { dbFromEnv, schema } from "@/db";
 import type { CategoryKey, RunSummary, Severity } from "@/db/schema";
+import { parseRecipients, resultsEmail, sendEmail } from "@/lib/email";
+import { appUrl } from "@/lib/env";
 import { newId, nowIso, sha256Hex } from "@/lib/id";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { runAuditAgent } from "@/agent/audit";
@@ -17,7 +19,7 @@ import { getJson, putJson, runKey } from "./store";
 import { CATEGORY_ORDER, scoreCategories } from "./score";
 import type { FindingDraft } from "./types";
 
-export type RunEnv = Pick<CloudflareEnv, "DB" | "AUDIT_STORE" | "ANTHROPIC_API_KEY" | "WEBFLOW_MCP_URL" | "APP_URL">;
+export type RunEnv = Pick<CloudflareEnv, "DB" | "AUDIT_STORE" | "ANTHROPIC_API_KEY" | "WEBFLOW_MCP_URL" | "APP_URL" | "RESEND_API_KEY" | "EMAIL_FROM">;
 
 async function loadRun(env: RunEnv, runId: string) {
   const db = dbFromEnv(env);
@@ -223,16 +225,48 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
   return { findings: active.length, overall };
 }
 
-// Step 4: mark complete (or failed) and advance the site's schedule.
+// Step 4: mark complete (or failed), advance the site's schedule, and email
+// the client's contact the results when they asked for them.
 export async function stepFinalize(env: RunEnv, runId: string, error?: string): Promise<void> {
-  const { db, run, site } = await loadRun(env, runId);
+  const { db, run, site, client } = await loadRun(env, runId);
   await db
     .update(schema.runs)
     .set({ status: error ? "failed" : "complete", finishedAt: nowIso(), error: error ?? null })
     .where(eq(schema.runs.id, run.id));
   if (!error) await db.update(schema.sites).set({ lastRunId: run.id }).where(eq(schema.sites.id, site.id));
   const emit = createEventSink(env, run.id);
-  if (error) await emit("error", error.slice(0, 300));
+  if (error) {
+    await emit("error", error.slice(0, 300));
+    return;
+  }
+  const to = client?.notifyResults ? parseRecipients(client.notifyEmail) : [];
+  if (!client || to.length === 0) return;
+  const fresh = await db.query.runs.findFirst({ where: eq(schema.runs.id, run.id) });
+  const previous = await db.query.runs.findFirst({
+    where: and(eq(schema.runs.siteId, site.id), eq(schema.runs.status, "complete"), ne(schema.runs.id, run.id)),
+    orderBy: desc(schema.runs.createdAt),
+  });
+  const summary = fresh?.summary;
+  const result = await sendEmail(
+    env,
+    "results",
+    resultsEmail({
+      to,
+      clientName: client.name,
+      siteName: site.name,
+      siteHost: new URL(site.baseUrl).host,
+      score: fresh?.scoreOverall ?? null,
+      previousScore: previous?.scoreOverall ?? null,
+      counts: summary?.findingsBySeverity ?? { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+      highlights: fresh?.highlights ?? [],
+      summary: fresh?.agentSummary ?? null,
+      proposals: summary?.proposals ?? 0,
+      appUrl: appUrl(env),
+      runId: run.id,
+    }),
+    site.id,
+  );
+  await emit("status", result === "sent" ? `Results emailed to ${to.join(", ")}` : result === "skipped" ? "Results email skipped (email not configured)" : "Results email failed (see activity log)");
 }
 
 export async function runAuditInline(env: RunEnv, runId: string): Promise<void> {

@@ -9,6 +9,7 @@ import { LiveLog } from "@/components/live-log";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
 import { runNow } from "@/app/actions";
+import { SubmitButton } from "@/components/submit-button";
 import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber } from "@/components/ui";
 import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
 
@@ -58,7 +59,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
             <span className="min-w-0 break-words">Audit failed: {run.error}</span>
             <form action={runNow}>
               <input type="hidden" name="siteId" value={site.id} />
-              <button className={`${btnSecondary} ${btnSm}`}>Run again</button>
+              <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Starting…">Run again</SubmitButton>
             </form>
           </div>
         </Notice>

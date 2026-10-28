@@ -31,11 +31,15 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 ## Commands
 
 - `npm run dev` — Next dev server with local Cloudflare bindings (D1/KV via Miniflare; audits run inline).
-- `npm run preview` — OpenNext build + `wrangler dev` on :8787 (closest to production: Workflows and cron work here; trigger cron with `curl "http://localhost:8787/__scheduled?cron=0+*+*+*+*"`).
+- `npm run preview` — OpenNext build + `wrangler dev` on :8787 (closest to production: Workflows and cron work here; trigger cron with `curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"`).
 - `npm run deploy` — build and deploy. Run `npm run db:migrate:remote` first when `drizzle/` changed.
 - `npm run typecheck`, `npm run lint`, `npm run cf-typegen` (after editing `wrangler.jsonc`).
 - `npm run db:generate` after changing `src/db/schema.ts`, then `npm run db:migrate:local`.
 
 ## Secrets and vars
 
-Secret: `ANTHROPIC_API_KEY` (`wrangler secret put` / `.dev.vars`). Vars in `wrangler.jsonc`: `APP_URL`, `WEBFLOW_MCP_URL`, `AUTH_MODE`.
+Secrets (`wrangler secret put` / `.dev.vars`): `ANTHROPIC_API_KEY`; `RESEND_API_KEY` for client emails (optional: without it every email is recorded as skipped in `audit_log`). Vars in `wrangler.jsonc`: `APP_URL`, `WEBFLOW_MCP_URL`, `AUTH_MODE`, `EMAIL_FROM`.
+
+## Client emails (`src/lib/email.ts`)
+
+Per client: `notify_email` (comma-separated), `notify_reminder`, `notify_results`. The hourly scheduler sends one reminder per upcoming scheduled audit (`sites.reminder_sent_for` guards it, set before sending); `stepFinalize` sends results on a complete run. Sending goes through Resend's HTTP API and never throws; outcomes are `email.sent|skipped|failed` rows in `audit_log`.

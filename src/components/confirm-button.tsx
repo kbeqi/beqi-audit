@@ -1,17 +1,12 @@
 "use client";
 
-// A submit button that asks for confirmation first. Works inside a server
-// action <form>; without JavaScript the form submits directly.
-export function ConfirmButton({ message, className, children }: { message: string; className?: string; children: React.ReactNode }) {
+import { SubmitButton } from "./submit-button";
+
+// Kept for existing call sites: a SubmitButton that confirms first.
+export function ConfirmButton({ message, className, children, pendingLabel }: { message: string; className?: string; children: React.ReactNode; pendingLabel?: string }) {
   return (
-    <button
-      type="submit"
-      className={className}
-      onClick={(e) => {
-        if (!window.confirm(message)) e.preventDefault();
-      }}
-    >
+    <SubmitButton confirm={message} className={className} pendingLabel={pendingLabel}>
       {children}
-    </button>
+    </SubmitButton>
   );
 }
