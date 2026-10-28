@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
 import { Nav } from "@/components/nav";
+import { SubmitButton } from "@/components/submit-button";
+import { signOut } from "@/app/auth-actions";
 import { currentActorOrNull, isUnprotected } from "@/lib/auth";
 import { pendingFixCount } from "@/lib/queries";
+import { btnGhost, btnSm } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: { default: "Beqi Audit", template: "%s · Beqi Audit" },
@@ -36,18 +39,28 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 <Mark />
                 Beqi Audit
               </Link>
-              <Nav pendingFixes={pending} />
+              <Nav pendingFixes={pending} showTeam />
               <div className="mt-auto hidden px-1 text-xs text-ink-3 lg:block">
-                <div className="truncate" title={actor}>
-                  {actor === "open-access" ? "No login configured" : actor}
+                <div className="truncate font-medium text-ink-2" title={actor.email}>
+                  {actor.via === "open" ? "No sign-in configured" : actor.name ?? actor.email}
                 </div>
-                <div className="mt-1">Audits by Claude · Webflow MCP</div>
+                {actor.name && actor.via !== "open" && <div className="truncate">{actor.email}</div>}
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span>{actor.role === "admin" ? "Admin" : "Member"}</span>
+                  {actor.via === "session" && (
+                    <form action={signOut}>
+                      <SubmitButton className={`${btnGhost} ${btnSm}`} pendingLabel="…">
+                        Sign out
+                      </SubmitButton>
+                    </form>
+                  )}
+                </div>
               </div>
             </aside>
             <div className="flex min-w-0 flex-1 flex-col">
               {open && (
                 <div className="px-4 py-2 text-sm tone-warn">
-                  <strong>This deployment is open to anyone with the URL.</strong> Put Cloudflare Access in front of it and set <code className="font-mono">AUTH_MODE</code> to <code className="font-mono">access</code> in wrangler.jsonc.
+                  <strong>This deployment is open to anyone with the URL.</strong> Set <code className="font-mono">AUTH_MODE</code> to <code className="font-mono">app</code> in wrangler.jsonc to require sign-in.
                 </div>
               )}
               <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 lg:px-8">{children}</main>
@@ -55,14 +68,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             </div>
           </div>
         ) : (
-          <main className="flex min-h-screen items-center justify-center p-6">
-            <div className="max-w-md rounded-xl border border-line bg-surface p-6 text-center">
-              <div className="mx-auto mb-3 flex justify-center">
-                <Mark />
-              </div>
-              <h1 className="text-lg font-semibold text-ink">Sign in required</h1>
-              <p className="mt-2 text-sm text-ink-2">This app is protected by Cloudflare Access. Open it through your Access login to continue.</p>
+          <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-6">
+            <div className="flex items-center gap-2 font-semibold tracking-tight text-ink">
+              <Mark />
+              Beqi Audit
             </div>
+            {children}
           </main>
         )}
       </body>

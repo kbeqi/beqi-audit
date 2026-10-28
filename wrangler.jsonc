@@ -16,10 +16,13 @@
     // Webflow's hosted MCP server. Claude (via the Anthropic MCP connector) and the
     // app's own site import both talk to it with the per-workspace OAuth token.
     "WEBFLOW_MCP_URL": "https://mcp.webflow.com/mcp",
-    // "access": only requests carrying Cloudflare Access's identity header are
-    // served (fail closed). "open": no login; use only while Access is not yet in
-    // front of the Worker. The UI shows a warning banner in open mode.
-    "AUTH_MODE": "open",
+    // "app": in-app sign-in by one-time email link; only people on the Team page
+    // (or ADMIN_EMAILS) can sign in. "access": trust Cloudflare Access's identity
+    // header instead (must still be a team member). "open": no sign-in; bring-up
+    // only, the UI shows a warning banner.
+    "AUTH_MODE": "app",
+    // Always admins, even with an empty users table: the lockout safety net.
+    "ADMIN_EMAILS": "kreshnik@beqi.co",
     // Sender for client emails (reminders and results) through Resend; the
     // domain must be verified in Resend. Requires the RESEND_API_KEY secret.
     "EMAIL_FROM": "Beqi Audit <audit@beqi.co>"

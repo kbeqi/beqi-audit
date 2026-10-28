@@ -8,7 +8,7 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 - Cloudflare D1 (SQLite) through Drizzle (`src/db/schema.ts`). Migrations in `drizzle/`, applied with wrangler (`npm run db:migrate:local|remote`).
 - Cloudflare Workflows run audits and approved fixes (`src/audit/workflow.ts`, one class, `params.kind` = `audit` | `fix`); the same functions run inline when no Workflow binding exists (local `next dev`).
 - Workers KV (`AUDIT_STORE`) holds per-run artifacts: the structured report, the report text and the full agent transcript under `runs/<runId>/*.json` (90-day TTL). D1 holds findings, scores, proposals, lifecycle and the activity log (`run_events`).
-- Auth: Cloudflare Access in front of the Worker; the actor email comes from `cf-access-authenticated-user-email` (`src/lib/auth.ts`). `AUTH_MODE=access` fails closed; `AUTH_MODE=open` is for bring-up only and shows a warning banner.
+- Auth (`src/lib/auth.ts`): `AUTH_MODE=app` (default) is in-app sign-in by one-time email link (`/login` → `requestSignIn` → `/api/auth/callback`), 30-day session cookie `beqi_session` backed by the `sessions` table (revocable). Only `users` rows (Team page, admins only) and `ADMIN_EMAILS` can sign in; configured admins are auto-created and can't be demoted or removed. Every page calls `requireSignedIn()` (`src/app/gate.tsx`); actions call `currentActor()` / `requireAdmin()`. `AUTH_MODE=access` trusts Cloudflare Access's header instead (must still be a team member); `open` is bring-up only.
 - Next.js 16 differs from older versions: read `node_modules/next/dist/docs/` before using an API you are unsure about. `cacheComponents` is off on purpose; pages are `force-dynamic`.
 
 ## The engine (`src/agent`)
@@ -35,11 +35,11 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 - `npm run deploy` — build and deploy. Run `npm run db:migrate:remote` first when `drizzle/` changed.
 - `npm run typecheck`, `npm run lint`, `npm run cf-typegen` (after editing `wrangler.jsonc`).
 - `npm run db:generate` after changing `src/db/schema.ts`, then `npm run db:migrate:local`.
-- `npm run test:links [baseUrl]` — crawls the running app (default :8787) and fails on any link that doesn't resolve, hits the error/not-found page, or whose entity label doesn't match the destination heading. Run it against the preview with seed data and against the live URL after a deploy.
+- `npm run test:links [baseUrl]` — (set `LINKCHECK_COOKIE=beqi_session=<token>` when sign-in is enforced) crawls the running app (default :8787) and fails on any link that doesn't resolve, hits the error/not-found page, or whose entity label doesn't match the destination heading. Run it against the preview with seed data and against the live URL after a deploy.
 
 ## Secrets and vars
 
-Secrets (`wrangler secret put` / `.dev.vars`): `ANTHROPIC_API_KEY`; `RESEND_API_KEY` for client emails (optional: without it every email is recorded as skipped in `audit_log`). Vars in `wrangler.jsonc`: `APP_URL`, `WEBFLOW_MCP_URL`, `AUTH_MODE`, `EMAIL_FROM`.
+Secrets (`wrangler secret put` / `.dev.vars`): `ANTHROPIC_API_KEY`; `RESEND_API_KEY` for sign-in links and client emails (without it every email is recorded as skipped in `audit_log`, and nobody new can sign in). Vars in `wrangler.jsonc`: `APP_URL`, `WEBFLOW_MCP_URL`, `AUTH_MODE`, `ADMIN_EMAILS`, `EMAIL_FROM`.
 
 ## Client emails (`src/lib/email.ts`)
 

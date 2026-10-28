@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { requireSignedIn } from "@/app/gate";
 import { recentRuns } from "@/lib/queries";
 import { Card, EmptyState, PageHeader, StatusPill, fmtCost, fmtDate, fmtDuration } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
 export default async function RunsPage() {
+  await requireSignedIn("/runs");
   const runs = await recentRuns(60);
   return (
     <div className="space-y-6">

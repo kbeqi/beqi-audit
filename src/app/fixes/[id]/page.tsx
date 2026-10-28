@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireSignedIn } from "@/app/gate";
 import { notFound } from "next/navigation";
 import { proposalDetail } from "@/lib/queries";
 import { LiveLog } from "@/components/live-log";
@@ -17,6 +18,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function FixPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  await requireSignedIn(`/fixes/${id}`);
   const data = await proposalDetail(id);
   if (!data) notFound();
   const { proposal, site, finding, events } = data;

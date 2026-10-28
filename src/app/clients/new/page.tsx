@@ -1,10 +1,12 @@
+import { requireSignedIn } from "@/app/gate";
 import { createClient } from "@/app/actions";
 import { SubmitButton } from "@/components/submit-button";
 import { Card, PageHeader, btnPrimary, inputCls, labelCls } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
-export default function NewClientPage() {
+export default async function NewClientPage() {
+  await requireSignedIn("/clients/new");
   return (
     <div className="max-w-lg">
       <PageHeader title="Add client" description="Create the client, then connect their Webflow workspace. Sites are imported automatically." />

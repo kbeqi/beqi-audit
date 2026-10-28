@@ -1,13 +1,13 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb, schema } from "@/db";
-import { currentActor } from "@/lib/auth";
+import { currentActorOrNull } from "@/lib/auth";
 import { eventsAfter } from "@/lib/queries";
 
 // GET /api/streams/<runId|proposalId>/events?after=<seq>
 // Polled by the live activity log. `live` tells the client whether to keep polling.
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  await currentActor();
+  if (!(await currentActorOrNull())) return NextResponse.json({ error: "not signed in" }, { status: 401 });
   const { id } = await params;
   const after = Number(new URL(request.url).searchParams.get("after") ?? 0) || 0;
   const events = await eventsAfter(id, after);

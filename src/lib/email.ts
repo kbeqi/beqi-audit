@@ -126,6 +126,22 @@ export function resultsEmail(opts: {
   return { to: opts.to, subject: title, text, html };
 }
 
+export function loginEmail(opts: { to: string; link: string; minutes: number }): EmailMessage {
+  const title = "Sign in to Beqi Audit";
+  return {
+    to: [opts.to],
+    subject: title,
+    text: `Use this link to sign in to Beqi Audit. It works once and expires in ${opts.minutes} minutes.\n\n${opts.link}\n\nIf you didn't request it, ignore this email.`,
+    html: layout(
+      title,
+      `<p style="line-height:1.5">Use the button to sign in. The link works once and expires in ${opts.minutes} minutes.</p>
+       <p><a href="${esc(opts.link)}" style="display:inline-block;background:#2a78d6;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">Sign in</a></p>
+       <p style="font-size:12px;color:#8a8984;word-break:break-all">Or copy this address: ${esc(opts.link)}</p>`,
+      "If you didn't request this, ignore it; nobody can sign in without the link.",
+    ),
+  };
+}
+
 export function testEmail(opts: { to: string[]; clientName: string; appUrl: string }): EmailMessage {
   const title = `Test email from Beqi Audit for ${opts.clientName}`;
   return {

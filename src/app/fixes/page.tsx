@@ -1,3 +1,4 @@
+import { requireSignedIn } from "@/app/gate";
 import { pendingFixesAcrossPortfolio, proposalsByStatus } from "@/lib/queries";
 import { ProposalRow } from "@/components/proposals";
 import { Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
@@ -5,6 +6,7 @@ import { Card, CardHeader, EmptyState, PageHeader } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 export default async function FixesPage() {
+  await requireSignedIn("/fixes");
   const [pending, done] = await Promise.all([pendingFixesAcrossPortfolio(), proposalsByStatus(["applied", "rejected", "failed"], 30)]);
   return (
     <div className="space-y-6">

@@ -6,6 +6,52 @@ import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-or
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
+export type UserRole = "admin" | "member";
+
+// Team members who may sign in. ADMIN_EMAILS (wrangler.jsonc) are admins even
+// without a row, so the first sign-in bootstraps the table.
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  role: text("role").$type<UserRole>().notNull().default("member"),
+  invitedBy: text("invited_by"),
+  lastLoginAt: text("last_login_at"),
+  disabledAt: text("disabled_at"),
+  createdAt: text("created_at").notNull().default(now),
+});
+
+// One-time sign-in links. Only the hash of the token is stored.
+export const loginTokens = sqliteTable(
+  "login_tokens",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: text("expires_at").notNull(),
+    usedAt: text("used_at"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("login_tokens_email_idx").on(t.email, t.createdAt)],
+);
+
+// Browser sessions, revocable server-side. The cookie holds the raw token.
+export const sessions = sqliteTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: text("expires_at").notNull(),
+    userAgent: text("user_agent"),
+    lastSeenAt: text("last_seen_at"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("sessions_user_idx").on(t.userId)],
+);
+
 export const clients = sqliteTable("clients", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -371,4 +417,5 @@ export type WebflowConnection = typeof webflowConnections.$inferSelect;
 export type PageMetric = typeof pageMetrics.$inferSelect;
 export type FixProposal = typeof fixProposals.$inferSelect;
 export type RunEvent = typeof runEvents.$inferSelect;
+export type User = typeof users.$inferSelect;
 export type IgnoreRule = typeof ignoreRules.$inferSelect;

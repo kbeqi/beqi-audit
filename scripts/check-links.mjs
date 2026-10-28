@@ -64,7 +64,7 @@ function normalize(href, fromPath) {
 const pages = new Map(); // path -> { status, html }
 async function load(path) {
   if (pages.has(path)) return pages.get(path);
-  const res = await fetch(BASE + path, { redirect: "manual", headers: { accept: "text/html" } });
+  const res = await fetch(BASE + path, { redirect: "manual", headers: { accept: "text/html", cookie: process.env.LINKCHECK_COOKIE ?? "" } });
   let status = res.status;
   let html = "";
   if (status >= 300 && status < 400) {

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireSignedIn } from "@/app/gate";
 import { notFound } from "next/navigation";
 import { clientDetail } from "@/lib/queries";
 import { deleteClient, disconnectWorkspace, reimportSites, runNow, sendTestEmail, updateClient } from "@/app/actions";
@@ -15,6 +16,7 @@ type Search = { connected?: string; imported?: string; saved?: string; error?: s
 export default async function ClientPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Search> }) {
   const { id } = await params;
   const { connected, imported, saved, error, notice } = await searchParams;
+  await requireSignedIn(`/clients/${id}`);
   const mailReady = emailConfigured(await getEnv());
   const data = await clientDetail(id);
   if (!data) notFound();

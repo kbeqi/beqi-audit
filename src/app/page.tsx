@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireSignedIn } from "@/app/gate";
 import { dashboardData, pendingFixesAcrossPortfolio, recentActivity, recentRuns } from "@/lib/queries";
 import { ProposalRow } from "@/components/proposals";
 import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatTile, StatusPill, btnPrimary, btnSecondary, fmtDay, hostOf, timeAgo } from "@/components/ui";
@@ -8,6 +9,7 @@ import { SubmitButton } from "@/components/submit-button";
 export const dynamic = "force-dynamic";
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  await requireSignedIn("/");
   const { error } = await searchParams;
   const [clients, pending, activity, runs] = await Promise.all([dashboardData(), pendingFixesAcrossPortfolio(), recentActivity(12), recentRuns(40)]);
   const allSites = clients.flatMap((c) => c.sites);

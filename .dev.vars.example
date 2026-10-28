@@ -4,7 +4,12 @@
 # Required. The audit and fix agents run on Claude through the Anthropic API.
 ANTHROPIC_API_KEY=
 
+# Sign-in links and client emails (Resend). Without it emails are recorded as skipped.
+RESEND_API_KEY=
+
 # Overrides the wrangler.jsonc vars in local dev.
 APP_URL=http://localhost:3000
 WEBFLOW_MCP_URL=https://mcp.webflow.com/mcp
+# "open" signs you in as dev@local without email; "app" enforces sign-in like production.
 AUTH_MODE=open
+ADMIN_EMAILS=kreshnik@beqi.co

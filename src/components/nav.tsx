@@ -8,13 +8,14 @@ const ITEMS = [
   { href: "/clients", label: "Clients", match: (p: string) => p.startsWith("/clients") || p.startsWith("/sites") },
   { href: "/fixes", label: "Fixes", match: (p: string) => p.startsWith("/fixes") },
   { href: "/runs", label: "Audits", match: (p: string) => p.startsWith("/runs") },
+  { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team"), team: true },
 ];
 
-export function Nav({ pendingFixes }: { pendingFixes: number }) {
+export function Nav({ pendingFixes, showTeam = true }: { pendingFixes: number; showTeam?: boolean }) {
   const pathname = usePathname() ?? "/";
   return (
     <nav aria-label="Primary" className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5">
-      {ITEMS.map((it) => {
+      {ITEMS.filter((it) => !it.team || showTeam).map((it) => {
         const active = it.match(pathname);
         return (
           <Link

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { requireSignedIn } from "@/app/gate";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
@@ -25,6 +26,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string; saved?: string }> }) {
   const { id } = await params;
   const { sev, saved } = await searchParams;
+  await requireSignedIn(`/sites/${id}`);
   const data = await siteDetail(id);
   if (!data) notFound();
   const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules } = data;

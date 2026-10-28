@@ -11,7 +11,7 @@ Claude audits Beqi's client Webflow sites on a schedule, proposes fixes, and app
 ## Local development
 
 ```bash
-cp .dev.vars.example .dev.vars        # add ANTHROPIC_API_KEY
+cp .dev.vars.example .dev.vars        # add ANTHROPIC_API_KEY; AUTH_MODE=open skips sign-in locally
 npm install
 npm run db:migrate:local
 npm run preview                       # http://localhost:8787 (Workflows + cron)
@@ -28,6 +28,8 @@ npm run deploy
 
 The Worker is `beqi-audit-app` (`beqi-audit` is the public Site Check widget). `APP_URL` in `wrangler.jsonc` must be the deployed URL: the Webflow MCP OAuth redirect URI is `<APP_URL>/api/webflow/callback`.
 
-### Protect it with Cloudflare Access
+### Sign-in and the team
 
-The app has no login of its own. In Zero Trust → Access → Applications, add a self-hosted application for the Worker's hostname with a policy that allows Beqi emails, then set `AUTH_MODE` to `access` in `wrangler.jsonc` and redeploy. Until then `AUTH_MODE=open` serves everyone and the UI shows a warning banner.
+People sign in with a one-time link sent to their email (no passwords). Only people on the **Team** page can sign in; admins add and remove them there. The addresses in `ADMIN_EMAILS` (`wrangler.jsonc`) are always admins, so the first sign-in bootstraps the team and nobody can lock themselves out. Sessions last 30 days per browser and can be revoked from the Team page. Sign-in links need the `RESEND_API_KEY` secret.
+
+Alternatively set `AUTH_MODE` to `access` to trust a Cloudflare Access application in front of the Worker (people must still be on the team).
