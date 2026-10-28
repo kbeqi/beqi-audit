@@ -279,6 +279,8 @@ function humanAction(action: string): string {
     "fix.approved": "Fix approved",
     "fix.rejected": "Fix rejected",
     "fix.resolved_manually": "Fix marked as done by hand",
+    "run.shared": "Report link created",
+    "run.unshared": "Report link turned off",
     "fix.apply_started": "Fix application started",
     "fix.applied": "Fix applied",
     "fix.skipped": "Fix skipped (value changed since audit)",

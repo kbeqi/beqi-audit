@@ -315,6 +315,40 @@ export async function reimportSites(formData: FormData) {
   });
 }
 
+// Public report links. A token is created once per run and reused; stopping
+// sharing clears it, which makes the old link stop working.
+export async function shareRun(formData: FormData) {
+  return guarded("shareRun", async () => {
+    const actor = await currentActor();
+    const runId = String(formData.get("runId"));
+    const db = await getDb();
+    const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId) });
+    if (!run) throw new Error("Run not found");
+    if (run.status !== "complete") redirect(`/runs/${runId}?error=${encodeURIComponent("Only completed audits can be shared.")}`);
+    if (!run.shareToken) {
+      const bytes = crypto.getRandomValues(new Uint8Array(18));
+      const token = [...bytes].map((b) => "0123456789abcdefghijklmnopqrstuvwxyz"[b % 36]).join("");
+      await db.update(schema.runs).set({ shareToken: token, sharedAt: nowIso(), sharedBy: actor }).where(eq(schema.runs.id, runId));
+      await log("run.shared", { runId }, run.siteId);
+    }
+    revalidatePath(`/runs/${runId}`);
+    redirect(`/runs/${runId}?shared=1`);
+  });
+}
+
+export async function unshareRun(formData: FormData) {
+  return guarded("unshareRun", async () => {
+    await currentActor();
+    const runId = String(formData.get("runId"));
+    const db = await getDb();
+    const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId), columns: { siteId: true } });
+    await db.update(schema.runs).set({ shareToken: null, sharedAt: null, sharedBy: null }).where(eq(schema.runs.id, runId));
+    await log("run.unshared", { runId }, run?.siteId);
+    revalidatePath(`/runs/${runId}`);
+    redirect(`/runs/${runId}?unshared=1`);
+  });
+}
+
 export async function disconnectWorkspace(formData: FormData) {
   return guarded("disconnectWorkspace", async () => {
     await currentActor();

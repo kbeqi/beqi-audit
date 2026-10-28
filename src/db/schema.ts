@@ -196,6 +196,10 @@ export const runs = sqliteTable(
     // Claude's own narrative of the audit (markdown) and its top highlights.
     agentSummary: text("agent_summary"),
     highlights: text("highlights", { mode: "json" }).$type<string[]>(),
+    // Public read-only report link (/share/<token>); null when not shared.
+    shareToken: text("share_token").unique(),
+    sharedAt: text("shared_at"),
+    sharedBy: text("shared_by"),
     error: text("error"),
     createdAt: text("created_at").notNull().default(now),
   },

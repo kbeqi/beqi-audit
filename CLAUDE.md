@@ -4,7 +4,7 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 
 ## Stack
 
-- Next.js 16 (App Router, `src/app`) on Cloudflare Workers via `@opennextjs/cloudflare`. `worker.ts` wraps the OpenNext handler and adds the cron `scheduled` handler and the Workflow class.
+- Next.js 16 (App Router, `src/app`; `(app)` is the signed-in shell, `(public)` holds sign-in and shared reports) on Cloudflare Workers via `@opennextjs/cloudflare`. `worker.ts` wraps the OpenNext handler and adds the cron `scheduled` handler and the Workflow class.
 - Cloudflare D1 (SQLite) through Drizzle (`src/db/schema.ts`). Migrations in `drizzle/`, applied with wrangler (`npm run db:migrate:local|remote`).
 - Cloudflare Workflows run audits and approved fixes (`src/audit/workflow.ts`, one class, `params.kind` = `audit` | `fix`); the same functions run inline when no Workflow binding exists (local `next dev`).
 - Workers KV (`AUDIT_STORE`) holds per-run artifacts: the structured report, the report text and the full agent transcript under `runs/<runId>/*.json` (90-day TTL). D1 holds findings, scores, proposals, lifecycle and the activity log (`run_events`).
@@ -40,6 +40,10 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 ## Secrets and vars
 
 Secrets (`wrangler secret put` / `.dev.vars`): `ANTHROPIC_API_KEY`; `RESEND_API_KEY` for sign-in links and client emails (without it every email is recorded as skipped in `audit_log`, and nobody new can sign in). Vars in `wrangler.jsonc`: `APP_URL`, `WEBFLOW_MCP_URL`, `AUTH_MODE`, `ADMIN_EMAILS`, `EMAIL_FROM`.
+
+## Shared reports
+
+`shareRun` puts a random token on `runs.share_token`; `/share/<token>` (public layout, `noindex`) renders `src/components/report.tsx` from `sharedReport()`, which exposes no proposals, ids, costs or actions. `unshareRun` clears the token. The brand mark lives in `src/components/brand.tsx` and `src/app/icon.svg` (favicon).
 
 ## Client emails (`src/lib/email.ts`)
 

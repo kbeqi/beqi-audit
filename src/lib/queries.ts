@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Client, Finding, FixProposal, Run, RunEvent, Site, WebflowConnection } from "@/db/schema";
 
@@ -156,6 +156,31 @@ export async function runDetail(runId: string) {
   const findingIds = findings.map((f) => f.id);
   const proposals = findingIds.length ? await chunked(findingIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.findingId, ids) })) : [];
   return { run, site: site!, client, findings, stateByFp, proposals, events };
+}
+
+// Everything the public report shows, by share token. No internal ids leak:
+// findings are returned without their proposals or actions.
+export async function sharedReport(token: string) {
+  if (!/^[a-z0-9]{18}$/.test(token)) return null;
+  const db = await getDb();
+  const run = await db.query.runs.findFirst({ where: and(eq(schema.runs.shareToken, token), eq(schema.runs.status, "complete")) });
+  if (!run) return null;
+  const [site, findings, previous] = await Promise.all([
+    db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId) }),
+    openFindingsForRun(run.siteId, run.id),
+    db.query.runs.findFirst({
+      where: and(eq(schema.runs.siteId, run.siteId), eq(schema.runs.status, "complete"), lt(schema.runs.createdAt, run.createdAt)),
+      orderBy: desc(schema.runs.createdAt),
+      columns: { scoreOverall: true, scores: true, finishedAt: true },
+    }),
+  ]);
+  if (!site) return null;
+  const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId), columns: { name: true } });
+  const done = await db.query.fixProposals.findMany({
+    where: and(eq(schema.fixProposals.siteId, site.id), inArray(schema.fixProposals.status, ["applied", "resolved"])),
+    columns: { title: true, status: true, appliedAt: true },
+  });
+  return { run, site, client, findings, previous: previous ?? null, fixesDone: done.filter((d) => d.appliedAt && d.appliedAt >= run.createdAt) };
 }
 
 export async function clientDetail(clientId: string) {

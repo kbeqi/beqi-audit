@@ -10,9 +10,11 @@ import { FindingsList } from "@/components/findings";
 import { LiveLog } from "@/components/live-log";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
-import { runNow } from "@/app/actions";
+import { runNow, shareRun, unshareRun } from "@/app/actions";
+import { CopyField } from "@/components/copy-field";
+import { appUrl, getEnv } from "@/lib/env";
 import { SubmitButton } from "@/components/submit-button";
-import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber } from "@/components/ui";
+import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber } from "@/components/ui";
 import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +28,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return { title: site ? `Audit · ${site.name}${run?.status === "running" ? " (running)" : ""}` : "Audit" };
 }
 
-export default async function RunPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ shared?: string; unshared?: string; error?: string }> }) {
   const { id } = await params;
+  const { shared, unshared, error } = await searchParams;
   await requireSignedIn(`/runs/${id}`);
   const data = await runDetail(id);
   if (!data) notFound();
@@ -40,6 +43,8 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
   const newFps = new Set(findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === run.id).map((f) => f.fingerprint));
   const sevTotal = run.summary ? Object.values(run.summary.findingsBySeverity).reduce((a, b) => a + b, 0) : 0;
   const openProposals = proposals.filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying");
+  const env = await getEnv();
+  const shareUrl = run.shareToken ? `${appUrl(env)}/share/${run.shareToken}` : null;
 
   return (
     <div className="space-y-6">
@@ -68,10 +73,49 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
           </div>
         </Notice>
       )}
+      {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
+      {unshared && <Notice tone="good">Sharing stopped. The old link no longer works.</Notice>}
       {live && (
         <Notice tone="accent">
           Claude is auditing the site through Webflow&apos;s MCP server and the live URL — reading only, nothing is changed. Audits usually take 5–10 minutes; this page updates as it works, and you can leave and come back.
         </Notice>
+      )}
+
+      {run.status === "complete" && (
+        <Card>
+          <CardHeader
+            title="Share this report"
+            description={shareUrl ? `Anyone with the link can read it — no sign-in. Shared by ${run.sharedBy ?? "—"} on ${fmtDate(run.sharedAt)}.` : "Create a read-only link to send to the client. It shows the score, summary and findings; nothing internal."}
+            actions={
+              shareUrl ? (
+                <form action={unshareRun}>
+                  <input type="hidden" name="runId" value={run.id} />
+                  <SubmitButton className={`${btnSecondary} ${btnSm}`} confirm="Stop sharing? The link stops working for everyone who has it." pendingLabel="Stopping…">
+                    Stop sharing
+                  </SubmitButton>
+                </form>
+              ) : (
+                <form action={shareRun}>
+                  <input type="hidden" name="runId" value={run.id} />
+                  <SubmitButton className={`${btnPrimary} ${btnSm}`} pendingLabel="Creating link…">
+                    Create share link
+                  </SubmitButton>
+                </form>
+              )
+            }
+          />
+          {shareUrl && (
+            <div className="space-y-2 p-5">
+              {shared && <p className="text-sm text-good">Link ready — copy it below.</p>}
+              <CopyField value={shareUrl} label="Share link" />
+              <p className="text-xs text-ink-3">
+                <Link href={`/share/${run.shareToken}`} target="_blank" className="text-accent hover:underline">
+                  Preview what they&apos;ll see
+                </Link>
+              </p>
+            </div>
+          )}
+        </Card>
       )}
 
       <Card>
