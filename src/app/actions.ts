@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { revalidatePath } from "next/cache";
 import { getDb, schema } from "@/db";
-import type { AuditFrequency } from "@/db/schema";
+import { FREQUENCY_LABELS, type AuditFrequency } from "@/db/schema";
 import { currentActor } from "@/lib/auth";
 import { appUrl, getCtx } from "@/lib/env";
 import { parseRecipients, sendEmail, testEmail } from "@/lib/email";
@@ -64,7 +64,7 @@ export async function updateClient(formData: FormData) {
     if (!name) throw new Error("Name is required");
     const rawEmail = String(formData.get("notifyEmail") ?? "").trim();
     const recipients = parseRecipients(rawEmail);
-    if (rawEmail && recipients.length === 0) redirect(`/clients/${id}?error=${encodeURIComponent("That notification email address doesn't look valid.")}`);
+    if (rawEmail && recipients.length === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("That notification email address doesn't look valid.")}`);
     const db = await getDb();
     await db
       .update(schema.clients)
@@ -77,8 +77,8 @@ export async function updateClient(formData: FormData) {
       })
       .where(eq(schema.clients.id, id));
     await log("client.updated", { clientId: id, name, notifyEmail: recipients });
-    revalidatePath(`/clients/${id}`);
-    redirect(`/clients/${id}?saved=1`);
+    revalidatePath(`/clients/${id}/settings`);
+    redirect(`/clients/${id}/settings?saved=1`);
   });
 }
 
@@ -91,7 +91,7 @@ export async function sendTestEmail(formData: FormData) {
     const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
     if (!client) throw new Error("Client not found");
     const to = parseRecipients(client.notifyEmail);
-    if (to.length === 0) redirect(`/clients/${id}?error=${encodeURIComponent("Save a notification email first.")}`);
+    if (to.length === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Save a notification email first.")}`);
     const result = await sendEmail(env, "test", testEmail({ to, clientName: client.name, appUrl: appUrl(env) }));
     const msg =
       result === "sent"
@@ -99,7 +99,7 @@ export async function sendTestEmail(formData: FormData) {
         : result === "skipped"
           ? "Email isn't configured yet: set the RESEND_API_KEY secret and EMAIL_FROM in wrangler.jsonc."
           : "The email provider rejected the message; details are in the activity log.";
-    redirect(`/clients/${id}?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
+    redirect(`/clients/${id}/settings?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
   });
 }
 
@@ -138,6 +138,7 @@ export async function updateSiteSettings(formData: FormData) {
     await currentActor();
     const siteId = String(formData.get("siteId"));
     const freq = String(formData.get("auditFrequency")) as AuditFrequency;
+    if (!(freq in FREQUENCY_LABELS)) throw new Error("Unknown audit schedule");
     const keyPages = String(formData.get("keyPages") ?? "/")
       .split(/[\n,]/)
       .map((s) => s.trim())
@@ -160,6 +161,73 @@ export async function updateSiteSettings(formData: FormData) {
     await log("site.settings_updated", { freq, keyPages, maxPages }, siteId);
     revalidatePath(`/sites/${siteId}`);
     redirect(`/sites/${siteId}?saved=1`);
+  });
+}
+
+// Starts an audit for every connected site of a client that isn't already
+// running. One site: open its run; several: back to the client page.
+export async function runClientNow(formData: FormData) {
+  return guarded("runClientNow", async () => {
+    await currentActor();
+    const clientId = String(formData.get("clientId"));
+    const db = await getDb();
+    const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, clientId) });
+    const connected = sites.filter((s) => s.connectionId);
+    if (connected.length === 0) redirect(`/clients/${clientId}/settings?error=${encodeURIComponent("No connected site to audit. Connect the client's Webflow workspace first.")}`);
+    const { env, ctx } = await getCtx();
+    const started: string[] = [];
+    for (const s of connected) {
+      const live = await db.query.runs.findFirst({ where: and(eq(schema.runs.siteId, s.id), inArray(schema.runs.status, ["queued", "running"])), columns: { id: true } });
+      if (live) {
+        started.push(live.id);
+        continue;
+      }
+      const { runId, mode } = await startRun(env, s.id, "manual", (p) => ctx.waitUntil(p));
+      await log("run.started", { runId, mode, from: "client" }, s.id);
+      started.push(runId);
+    }
+    if (started.length === 1) redirect(`/runs/${started[0]}`);
+    redirect(`/clients/${clientId}/audits?notice=${encodeURIComponent(`Audits started for ${started.length} sites.`)}`);
+  });
+}
+
+// Client logo: an image stored in KV, served by /api/clients/<id>/logo.
+const LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/gif"]);
+const LOGO_MAX_BYTES = 1_000_000;
+
+export async function uploadClientLogo(formData: FormData) {
+  return guarded("uploadClientLogo", async () => {
+    const actor = await currentActor();
+    const id = String(formData.get("clientId"));
+    const file = formData.get("logo");
+    if (!(file instanceof File) || file.size === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Choose an image file first.")}`);
+    if (!LOGO_TYPES.has(file.type)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Use a PNG, JPG, SVG, WebP or GIF.")}`);
+    if (file.size > LOGO_MAX_BYTES) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Keep the logo under 1 MB.")}`);
+    const { env } = await getCtx();
+    const key = `clients/${id}/logo-${Date.now().toString(36)}`;
+    await env.AUDIT_STORE.put(key, await file.arrayBuffer(), { metadata: { contentType: file.type } });
+    const db = await getDb();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id), columns: { logoKey: true } });
+    await db.update(schema.clients).set({ logoKey: key, logoUpdatedAt: nowIso() }).where(eq(schema.clients.id, id));
+    if (client?.logoKey) await env.AUDIT_STORE.delete(client.logoKey).catch(() => {});
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "client.logo_updated", detail: { clientId: id, type: file.type, bytes: file.size } });
+    revalidatePath(`/clients/${id}`, "layout");
+    redirect(`/clients/${id}/settings?saved=1`);
+  });
+}
+
+export async function removeClientLogo(formData: FormData) {
+  return guarded("removeClientLogo", async () => {
+    await currentActor();
+    const id = String(formData.get("clientId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id), columns: { logoKey: true } });
+    if (client?.logoKey) await env.AUDIT_STORE.delete(client.logoKey).catch(() => {});
+    await db.update(schema.clients).set({ logoKey: null, logoUpdatedAt: null }).where(eq(schema.clients.id, id));
+    await log("client.logo_removed", { clientId: id });
+    revalidatePath(`/clients/${id}`, "layout");
+    redirect(`/clients/${id}/settings?saved=1`);
   });
 }
 
@@ -308,10 +376,10 @@ export async function reimportSites(formData: FormData) {
     } catch (e) {
       const message = (e as Error).message ?? String(e);
       await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId: id, error: message.slice(0, 500) } });
-      redirect(`/clients/${clientId}?error=${encodeURIComponent(message.slice(0, 200))}`);
+      redirect(`/clients/${clientId}/settings?error=${encodeURIComponent(message.slice(0, 200))}`);
     }
-    revalidatePath(`/clients/${clientId}`);
-    redirect(`/clients/${clientId}?imported=1`);
+    revalidatePath(`/clients/${clientId}`, "layout");
+    redirect(`/clients/${clientId}/sites?imported=1`);
   });
 }
 
@@ -358,7 +426,7 @@ export async function disconnectWorkspace(formData: FormData) {
     await db.update(schema.webflowConnections).set({ revokedAt: nowIso() }).where(eq(schema.webflowConnections.id, id));
     await db.update(schema.sites).set({ connectionId: null }).where(eq(schema.sites.connectionId, id));
     await log("webflow.disconnected", { connectionId: id, clientId });
-    revalidatePath(`/clients/${clientId}`);
-    redirect(`/clients/${clientId}`);
+    revalidatePath(`/clients/${clientId}`, "layout");
+    redirect(`/clients/${clientId}/settings?notice=${encodeURIComponent("Workspace disconnected.")}`);
   });
 }

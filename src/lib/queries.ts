@@ -183,6 +183,7 @@ export async function sharedReport(token: string) {
   return { run, site, client, findings, previous: previous ?? null, fixesDone: done.filter((d) => d.appliedAt && d.appliedAt >= run.createdAt) };
 }
 
+// The client hub: everything the client's tabs show, in one batched fetch.
 export async function clientDetail(clientId: string) {
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
@@ -191,7 +192,43 @@ export async function clientDetail(clientId: string) {
     db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id), orderBy: schema.sites.name }),
     db.query.webflowConnections.findMany({ where: eq(schema.webflowConnections.clientId, client.id), orderBy: desc(schema.webflowConnections.createdAt) }),
   ]);
-  return { client, sites: await siteCards(sites), connections };
+  const cards = await siteCards(sites);
+  const siteIds = sites.map((s) => s.id);
+  const [runs, proposals, activity] = siteIds.length
+    ? await Promise.all([
+        chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: inArray(schema.runs.siteId, ids), orderBy: desc(schema.runs.createdAt), limit: 60 })),
+        chunked(siteIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.siteId, ids), orderBy: desc(schema.fixProposals.createdAt), limit: 150 })),
+        chunked(siteIds, 60, (ids) => db.query.auditLog.findMany({ where: inArray(schema.auditLog.siteId, ids), orderBy: desc(schema.auditLog.createdAt), limit: 15 })),
+      ])
+    : [[], [], []];
+  runs.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  proposals.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  activity.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const completed = runs.filter((r) => r.status === "complete");
+  const latest = completed[0] ?? null;
+  const previousOfLatest = latest ? (completed.find((r) => r.siteId === latest.siteId && r.id !== latest.id) ?? null) : null;
+  const latestFindings = latest ? await openFindingsForRun(latest.siteId, latest.id) : [];
+  const pendingFixes = proposals.filter((p) => OPEN_PROPOSAL_STATUSES.includes(p.status as (typeof OPEN_PROPOSAL_STATUSES)[number]));
+  return { client, sites: cards, connections, runs, latest, previousOfLatest, latestFindings, proposals, pendingFixes, activity: activity.slice(0, 15) };
+}
+
+// Just what the client header and tabs need.
+export async function clientHeader(clientId: string) {
+  const db = await getDb();
+  const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
+  if (!client) return null;
+  const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id), columns: { id: true, connectionId: true } });
+  const siteIds = sites.map((s) => s.id);
+  const [live, pending] = siteIds.length
+    ? await Promise.all([
+        chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: and(inArray(schema.runs.siteId, ids), inArray(schema.runs.status, ["queued", "running"])), columns: { id: true, siteId: true } })),
+        chunked(siteIds, 60, (ids) => db.query.fixProposals.findMany({ where: and(inArray(schema.fixProposals.siteId, ids), inArray(schema.fixProposals.status, [...OPEN_PROPOSAL_STATUSES])), columns: { id: true } })),
+      ])
+    : [[], []];
+  const hasCompleted = siteIds.length
+    ? (await chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: and(inArray(schema.runs.siteId, ids), eq(schema.runs.status, "complete")), columns: { id: true }, limit: 1 }))).length > 0
+    : false;
+  return { client, siteCount: sites.length, connectedCount: sites.filter((s) => s.connectionId).length, running: live, pendingFixes: pending.length, hasCompleted };
 }
 
 export async function proposalDetail(proposalId: string) {
@@ -203,7 +240,8 @@ export async function proposalDetail(proposalId: string) {
     proposal.findingId ? db.query.findings.findFirst({ where: eq(schema.findings.id, proposal.findingId) }) : Promise.resolve(undefined),
     db.query.runEvents.findMany({ where: eq(schema.runEvents.streamId, proposal.id), orderBy: asc(schema.runEvents.seq), limit: 300 }),
   ]);
-  return { proposal, site: site!, finding: finding ?? null, events };
+  const client = site ? await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId), columns: { id: true, name: true } }) : null;
+  return { proposal, site: site!, client: client ?? null, finding: finding ?? null, events };
 }
 
 // Events after a sequence number, for live polling.

@@ -10,9 +10,9 @@ const GLYPH: Record<RunEventKind, { g: string; cls: string }> = {
   tool_result: { g: "↩", cls: "text-ink-3" },
   fetch: { g: "⇣", cls: "text-ink-3" },
   text: { g: "✎", cls: "text-ink-3" },
-  warning: { g: "⚠", cls: "text-serious" },
-  error: { g: "✕", cls: "text-critical" },
-  done: { g: "✓", cls: "text-good" },
+  warning: { g: "⚠", cls: "text-serious-text" },
+  error: { g: "✕", cls: "text-critical-text" },
+  done: { g: "✓", cls: "text-good-text" },
 };
 
 type Ev = Pick<RunEvent, "id" | "seq" | "kind" | "title" | "detail" | "createdAt">;
@@ -80,7 +80,7 @@ export function LiveLog({ streamId, initial, live, compact = false, startedAt }:
   const visible = compact ? events.filter((e) => e.kind !== "tool_result") : events;
 
   return (
-    <div className={`${compact ? "max-h-72" : "max-h-[32rem]"} overflow-y-auto px-5 py-2`} aria-live="polite">
+    <div className={`${compact ? "max-h-72" : "max-h-[32rem]"} overflow-y-auto px-5 py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`} aria-live="polite" role="region" aria-label="Agent activity log" tabIndex={0}>
       {visible.length === 0 && <p className="py-6 text-center text-sm text-ink-3">{polling ? "Waiting for the agent to start…" : "No activity recorded."}</p>}
       {visible.map((e) => {
         const g = GLYPH[e.kind] ?? GLYPH.text;
@@ -91,7 +91,7 @@ export function LiveLog({ streamId, initial, live, compact = false, startedAt }:
               {g.g}
             </span>
             <div className="min-w-0">
-              <div className={`break-words ${e.kind === "text" ? "text-ink-2" : e.kind === "error" ? "text-critical" : "text-ink"}`}>{e.title}</div>
+              <div className={`break-words ${e.kind === "text" ? "text-ink-2" : e.kind === "error" ? "text-critical-text" : "text-ink"}`}>{e.title}</div>
               {typeof d.url === "string" && e.kind !== "fetch" && <div className="truncate font-mono text-xs text-ink-3">{d.url}</div>}
               {e.kind === "done" && typeof d.costUsd === "number" && <div className="text-xs text-ink-3">Cost ${d.costUsd.toFixed(2)}</div>}
             </div>

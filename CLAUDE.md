@@ -26,7 +26,8 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 - Keep Workflow step return values small; persist large data to KV (`AUDIT_STORE`) inside the step.
 - D1 limits bound parameters per statement: insert findings in chunks (see `stepAnalyze`).
 - Webflow MCP auth (`src/lib/webflow/mcp-oauth.ts`): OAuth against the MCP server using the MCP SDK's `auth()` helper (discovery, dynamic client registration, PKCE, refresh). No Webflow Marketplace app. The registered client is cached in KV; tokens live on `webflow_connections`.
-- UI: tokens in `src/app/globals.css` (light and dark are both chosen values), components in `src/components/ui.tsx`. Status colors only mean good/warning/serious/critical and always come with a text label.
+- UI: tokens in `src/app/globals.css` (light and dark are both chosen values; `--*-text` variants are the contrast-safe colours for text, the bare tokens are for fills), components in `src/components/ui.tsx`. Status colors only mean good/warning/serious/critical and always come with a text label.
+- Navigation model: Portfolio → Clients → one client's hub (`/clients/[id]` with Overview / Audits / Fixes / Sites / Settings tabs, shared `layout.tsx` header with logo-or-name and Audit now) → site, run and fix pages, whose breadcrumbs lead back into the hub. `/runs` and `/fixes` are cross-client views reachable from the portfolio only.
 
 ## Commands
 
@@ -35,6 +36,7 @@ Internal tool for Beqi (Webflow agency): Claude audits client Webflow sites on a
 - `npm run deploy` — build and deploy. Run `npm run db:migrate:remote` first when `drizzle/` changed.
 - `npm run typecheck`, `npm run lint`, `npm run cf-typegen` (after editing `wrangler.jsonc`).
 - `npm run db:generate` after changing `src/db/schema.ts`, then `npm run db:migrate:local`.
+- `node scripts/ux-check.mjs [baseUrl] [loginToken]` — orientation (one h1, page titles, breadcrumbs, active nav/tab), labels, axe serious/critical, no horizontal overflow, at desktop and phone widths. Seed a `login_tokens` row and pass its raw token.
 - `npm run test:links [baseUrl]` — (set `LINKCHECK_COOKIE=beqi_session=<token>` when sign-in is enforced) crawls the running app (default :8787) and fails on any link that doesn't resolve, hits the error/not-found page, or whose entity label doesn't match the destination heading. Run it against the preview with seed data and against the live URL after a deploy.
 
 ## Secrets and vars

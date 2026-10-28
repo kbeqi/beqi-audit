@@ -9,16 +9,24 @@
   --surface-2: #f3f2ee;
   --ink: #0b0b0b;
   --ink-2: #52514e;
-  --ink-3: #898781;
+  --ink-3: #6b6a64;
   --line: #e1e0d9;
   --line-2: #c3c2b7;
-  --accent: #2a78d6;
+  /* Accent: one blue for links and buttons; 6.6:1 on the surface, 6.8:1 under white. */
+  --accent: #1a5ba8;
+  --accent-bg: #1a5ba8;
   --accent-ink: #ffffff;
   --accent-soft: #e4effb;
+  /* Status fills (rings, meters) and their text-safe counterparts (>= 4.5:1 on
+     the surface and on the 16% tints the pills use). */
   --good: #0ca30c;
   --warn: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
+  --good-text: #0a6e0a;
+  --warn-text: #7a4f00;
+  --serious-text: #9a3f16;
+  --critical-text: #a82424;
   --up: #006300;
   --ring: rgba(11, 11, 11, 0.1);
 }
@@ -31,12 +39,17 @@
     --surface-2: #232322;
     --ink: #f0efec;
     --ink-2: #c3c2b7;
-    --ink-3: #898781;
+    --ink-3: #a3a29b;
     --line: #2c2c2a;
     --line-2: #383835;
-    --accent: #3987e5;
+    --accent: #5a9bea;
+    --accent-bg: #2a6fc4;
     --accent-ink: #ffffff;
     --accent-soft: #15283f;
+    --good-text: #4fd24f;
+    --warn-text: #f5c04d;
+    --serious-text: #f5a584;
+    --critical-text: #f08a8a;
     --up: #0ca30c;
     --ring: rgba(255, 255, 255, 0.1);
   }
@@ -49,12 +62,17 @@
   --surface-2: #232322;
   --ink: #f0efec;
   --ink-2: #c3c2b7;
-  --ink-3: #898781;
+  --ink-3: #a3a29b;
   --line: #2c2c2a;
   --line-2: #383835;
-  --accent: #3987e5;
+  --accent: #5a9bea;
+  --accent-bg: #2a6fc4;
   --accent-ink: #ffffff;
   --accent-soft: #15283f;
+  --good-text: #4fd24f;
+  --warn-text: #f5c04d;
+  --serious-text: #f5a584;
+  --critical-text: #f08a8a;
   --up: #0ca30c;
   --ring: rgba(255, 255, 255, 0.1);
 }
@@ -69,12 +87,17 @@
   --color-line: var(--line);
   --color-line-2: var(--line-2);
   --color-accent: var(--accent);
+  --color-accent-bg: var(--accent-bg);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
   --color-good: var(--good);
   --color-warn: var(--warn);
   --color-serious: var(--serious);
   --color-critical: var(--critical);
+  --color-good-text: var(--good-text);
+  --color-warn-text: var(--warn-text);
+  --color-serious-text: var(--serious-text);
+  --color-critical-text: var(--critical-text);
   --color-up: var(--up);
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -99,10 +122,10 @@ a {
 
 /* Status-tinted fills: a light step of the same hue, so state reads across the
    whole chip (meter rule). */
-.tone-good { color: var(--good); background: color-mix(in oklab, var(--good) 14%, var(--surface)); }
-.tone-warn { color: color-mix(in oklab, var(--warn) 70%, var(--ink)); background: color-mix(in oklab, var(--warn) 18%, var(--surface)); }
-.tone-serious { color: color-mix(in oklab, var(--serious) 75%, var(--ink)); background: color-mix(in oklab, var(--serious) 16%, var(--surface)); }
-.tone-critical { color: var(--critical); background: color-mix(in oklab, var(--critical) 12%, var(--surface)); }
+.tone-good { color: var(--good-text); background: color-mix(in oklab, var(--good) 16%, var(--surface)); }
+.tone-warn { color: var(--warn-text); background: color-mix(in oklab, var(--warn) 18%, var(--surface)); }
+.tone-serious { color: var(--serious-text); background: color-mix(in oklab, var(--serious) 16%, var(--surface)); }
+.tone-critical { color: var(--critical-text); background: color-mix(in oklab, var(--critical) 14%, var(--surface)); }
 .tone-neutral { color: var(--ink-2); background: var(--surface-2); }
 .tone-accent { color: var(--accent); background: var(--accent-soft); }
 

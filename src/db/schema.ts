@@ -57,6 +57,9 @@ export const clients = sqliteTable("clients", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   notes: text("notes"),
+  // Logo stored in AUDIT_STORE under this key (served by /api/clients/<id>/logo).
+  logoKey: text("logo_key"),
+  logoUpdatedAt: text("logo_updated_at"),
   // Where audit emails for this client go (one address, or several separated
   // by commas). Empty means no emails.
   notifyEmail: text("notify_email"),
@@ -102,7 +105,16 @@ export const webflowConnections = sqliteTable(
   (t) => [index("webflow_connections_client_idx").on(t.clientId)],
 );
 
-export type AuditFrequency = "daily" | "weekly" | "monthly" | "off";
+export type AuditFrequency = "daily" | "every3days" | "weekly" | "biweekly" | "monthly" | "off";
+
+export const FREQUENCY_LABELS: Record<AuditFrequency, string> = {
+  daily: "Daily",
+  every3days: "Every 3 days",
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+  monthly: "Monthly",
+  off: "Off (manual only)",
+};
 
 export const sites = sqliteTable(
   "sites",

@@ -65,7 +65,7 @@ export function Report({
             <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
               <div className="text-xs font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
               <div className="mt-1 flex items-end justify-between">
-                <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical" : "text-ink"}`}>{score ?? "–"}</div>
+                <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical-text" : "text-ink"}`}>{score ?? "–"}</div>
                 {previous && <Delta now={score} before={previous.scores?.[cat]} />}
               </div>
             </div>
@@ -103,7 +103,7 @@ export function Report({
           <ul className="mt-3 space-y-1.5 text-sm text-ink-2">
             {fixesDone.map((f, i) => (
               <li key={i} className="flex gap-2">
-                <span aria-hidden className="text-good">
+                <span aria-hidden className="text-good-text">
                   ✓
                 </span>
                 <span>

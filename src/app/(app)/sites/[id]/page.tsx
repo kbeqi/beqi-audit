@@ -5,7 +5,7 @@ import { currentActorOrNull } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
-import type { Severity } from "@/db/schema";
+import { FREQUENCY_LABELS, type AuditFrequency, type Severity } from "@/db/schema";
 import { siteDetail } from "@/lib/queries";
 import { deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
 import { FindingsList } from "@/components/findings";
@@ -43,7 +43,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
 
   return (
     <div className="space-y-6">
-      <Crumbs items={[{ href: "/clients", label: "Clients" }, { href: `/clients/${client.id}`, label: client.name }, { label: site.name }]} />
+      <Crumbs items={[{ href: "/clients", label: "Clients" }, { href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/sites`, label: "Sites" }, { label: site.name }]} />
       <PageHeader
         title={site.name}
         description={
@@ -112,7 +112,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                   <Delta now={score} before={previous?.scores?.[cat]} />
                 </div>
                 <div className="mt-1 flex items-end justify-between">
-                  <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical" : "text-ink"}`}>{score ?? "–"}</div>
+                  <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical-text" : "text-ink"}`}>{score ?? "–"}</div>
                   <div className="text-xs text-ink-3 num">{latest?.summary?.findingsByCategory[cat] ?? 0} findings</div>
                 </div>
               </div>
@@ -253,10 +253,11 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                 Audit schedule
               </label>
               <select id="auditFrequency" name="auditFrequency" defaultValue={site.auditFrequency} className={inputCls}>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-                <option value="off">Off (manual only)</option>
+                {(Object.keys(FREQUENCY_LABELS) as AuditFrequency[]).map((f) => (
+                  <option key={f} value={f}>
+                    {FREQUENCY_LABELS[f]}
+                  </option>
+                ))}
               </select>
             </div>
             <div>

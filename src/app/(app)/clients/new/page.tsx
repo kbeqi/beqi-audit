@@ -1,14 +1,17 @@
 import { requireSignedIn } from "@/app/gate";
+import type { Metadata } from "next";
 import { createClient } from "@/app/actions";
 import { SubmitButton } from "@/components/submit-button";
-import { Card, PageHeader, btnPrimary, inputCls, labelCls } from "@/components/ui";
+import { Card, Crumbs, PageHeader, btnPrimary, inputCls, labelCls } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Add client" };
 
 export default async function NewClientPage() {
   await requireSignedIn("/clients/new");
   return (
-    <div className="max-w-lg">
+    <div className="max-w-lg space-y-4">
+      <Crumbs items={[{ href: "/clients", label: "Clients" }, { label: "Add client" }]} />
       <PageHeader title="Add client" description="Create the client, then connect their Webflow workspace. Sites are imported automatically." />
       <Card className="p-5">
         <form action={createClient} className="space-y-4">

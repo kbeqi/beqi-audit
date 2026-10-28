@@ -75,7 +75,7 @@ export function Delta({ now, before, suffix = "" }: { now: number | null | undef
   if (d === 0) return <span className="text-xs text-ink-3">±0{suffix}</span>;
   const up = d > 0;
   return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${up ? "text-up" : "text-critical"}`} aria-label={`${up ? "up" : "down"} ${Math.abs(d)} vs previous`}>
+    <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${up ? "text-up" : "text-critical-text"}`} aria-label={`${up ? "up" : "down"} ${Math.abs(d)} vs previous`}>
       <span aria-hidden>{up ? "▲" : "▼"}</span>
       {Math.abs(d)}
       {suffix}
@@ -115,7 +115,7 @@ export function StatusPill({ status }: { status: RunStatus | string }) {
   const tone: Tone = status === "complete" ? "good" : status === "failed" ? "critical" : status === "running" ? "accent" : "neutral";
   return (
     <Pill tone={tone}>
-      {status === "running" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent" />}
+      {status === "running" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent-bg" />}
       {status}
     </Pill>
   );
@@ -126,7 +126,7 @@ export function ProposalStatusPill({ status }: { status: ProposalStatus }) {
   const label = status === "proposed" ? "needs review" : status === "resolved" ? "fixed manually" : status;
   return (
     <Pill tone={tone}>
-      {status === "applying" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent" />}
+      {status === "applying" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent-bg" />}
       {label}
     </Pill>
   );
@@ -235,10 +235,10 @@ export function KeyValue({ items }: { items: { k: string; v: React.ReactNode }[]
 // ---- controls ---------------------------------------------------------------
 
 export const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
-export const btnPrimary = `${btn} bg-accent text-accent-ink hover:brightness-110`;
+export const btnPrimary = `${btn} bg-accent-bg text-accent-ink hover:brightness-110`;
 export const btnSecondary = `${btn} border border-line-2 bg-surface text-ink hover:bg-surface-2`;
 export const btnGhost = `${btn} text-ink-2 hover:bg-surface-2 hover:text-ink`;
-export const btnDanger = `${btn} border border-line-2 bg-surface text-critical hover:bg-surface-2`;
+export const btnDanger = `${btn} border border-line-2 bg-surface text-critical-text hover:bg-surface-2`;
 export const btnSm = "!px-2 !py-1 !text-xs";
 export const inputCls = "w-full rounded-lg border border-line-2 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25";
 export const labelCls = "mb-1 block text-xs font-medium text-ink-2";

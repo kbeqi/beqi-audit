@@ -48,7 +48,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
 
   return (
     <div className="space-y-6">
-      <Crumbs items={[{ href: "/runs", label: "Audits" }, ...(client ? [{ href: `/clients/${client.id}`, label: client.name }] : []), { href: `/sites/${site.id}`, label: site.name }, { label: fmtDate(run.createdAt) }]} />
+      <Crumbs items={[{ href: "/clients", label: "Clients" }, ...(client ? [{ href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/audits`, label: "Audits" }] : []), { label: `${site.name} · ${fmtDate(run.createdAt)}` }]} />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-2">
@@ -106,7 +106,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
           />
           {shareUrl && (
             <div className="space-y-2 p-5">
-              {shared && <p className="text-sm text-good">Link ready — copy it below.</p>}
+              {shared && <p className="text-sm text-good-text">Link ready — copy it below.</p>}
               <CopyField value={shareUrl} label="Share link" />
               <p className="text-xs text-ink-3">
                 <Link href={`/share/${run.shareToken}`} target="_blank" className="text-accent hover:underline">

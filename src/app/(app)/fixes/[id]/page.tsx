@@ -23,14 +23,15 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
   await requireSignedIn(`/fixes/${id}`);
   const data = await proposalDetail(id);
   if (!data) notFound();
-  const { proposal, site, finding, events } = data;
+  const { proposal, site, client, finding, events } = data;
+  const clientName = client?.name ?? "Client";
   const live = proposal.status === "applying";
   const changes = proposal.proposal?.changes ?? [];
   const target = proposal.target;
 
   return (
     <div className="space-y-6">
-      <Crumbs items={[{ href: "/fixes", label: "Fixes" }, { href: `/sites/${site.id}`, label: site.name }, { label: proposal.title ?? actionLabel(proposal.action) }]} />
+      <Crumbs items={[{ href: "/clients", label: "Clients" }, { href: `/clients/${site.clientId}`, label: clientName }, { href: `/clients/${site.clientId}/fixes`, label: "Fixes" }, { label: proposal.title ?? actionLabel(proposal.action) }]} />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-2">
@@ -50,7 +51,7 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
             hostOf(site.baseUrl)
           )
         }
-        actions={<DecisionButtons proposal={proposal} back={`/fixes/${proposal.id}`} />}
+        actions={<DecisionButtons proposal={proposal} back={`/clients/${site.clientId}/fixes`} />}
       />
 
       {proposal.status === "applied" && proposal.result && (

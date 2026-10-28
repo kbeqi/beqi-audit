@@ -1,12 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { requireSignedIn } from "@/app/gate";
 import { dashboardData, pendingFixesAcrossPortfolio, recentActivity, recentRuns } from "@/lib/queries";
 import { ProposalRow } from "@/components/proposals";
 import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatTile, StatusPill, btnPrimary, btnSecondary, fmtDay, hostOf, timeAgo } from "@/components/ui";
 import { runNow } from "@/app/actions";
+import { humanAction } from "@/lib/activity";
 import { SubmitButton } from "@/components/submit-button";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Portfolio" };
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   await requireSignedIn("/");
@@ -69,7 +72,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               </div>
             </Card>
             <div className="grid gap-4 sm:grid-cols-3">
-              <StatTile label="Critical issues open" value={<span className={critical ? "text-critical" : ""}>{critical}</span>} hint={`${high} high`} />
+              <StatTile label="Critical issues open" value={<span className={critical ? "text-critical-text" : ""}>{critical}</span>} hint={`${high} high`} />
               <StatTile label="Fixes awaiting review" value={pending.length} hint={pending.length ? "Approve to let Claude apply them" : "Nothing waiting"} />
               <StatTile label="Audits this week" value={runsThisWeek} hint={`${runs.filter((r) => r.status === "running" || r.status === "queued").length} running now`} />
             </div>
@@ -160,7 +163,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                                 <CountPill n={s.openBySeverity.critical} tone="critical" label="critical" />
                                 <CountPill n={s.openBySeverity.high} tone="serious" label="high" />
                                 <CountPill n={s.openBySeverity.medium} tone="warn" label="medium" />
-                                {s.openFindings === 0 && <span className="text-xs text-good">Clean</span>}
+                                {s.openFindings === 0 && <span className="text-xs text-good-text">Clean</span>}
                               </div>
                             ) : (
                               <span className="text-xs text-ink-3">not audited</span>
@@ -168,7 +171,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                           </td>
                           <td>
                             {s.pendingFixes ? (
-                              <Link href={`/sites/${s.site.id}#fixes`} className="text-xs font-medium text-accent hover:underline">
+                              <Link href={`/clients/${client.id}/fixes`} className="text-xs font-medium text-accent hover:underline">
                                 {s.pendingFixes} to review
                               </Link>
                             ) : (
@@ -211,7 +214,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                 count={pending.length}
                 actions={
                   <Link href="/fixes" className="text-xs font-medium text-accent hover:underline">
-                    All fixes
+                    All clients&apos; fixes
                   </Link>
                 }
               />
@@ -258,33 +261,3 @@ function sinceDays(days: number): number {
   return Date.now() - days * 86400_000;
 }
 
-function humanAction(action: string): string {
-  const map: Record<string, string> = {
-    "client.created": "Client added",
-    "client.updated": "Client updated",
-    "webflow.connected": "Webflow workspace connected",
-    "webflow.connect_failed": "Webflow connection failed",
-    "webflow.sites_imported": "Sites imported from Webflow",
-    "webflow.import_failed": "Site import from Webflow failed",
-    "client.deleted": "Client deleted",
-    "email.sent": "Email sent",
-    "email.skipped": "Email skipped (not configured)",
-    "email.failed": "Email failed",
-    "action.error": "An action failed (details in the log)",
-    "webflow.disconnected": "Webflow workspace disconnected",
-    "run.started": "Audit started",
-    "site.settings_updated": "Site settings changed",
-    "ignore_rule.created": "Ignore rule added",
-    "finding.state_changed": "Finding status changed",
-    "fix.approved": "Fix approved",
-    "fix.rejected": "Fix rejected",
-    "fix.resolved_manually": "Fix marked as done by hand",
-    "run.shared": "Report link created",
-    "run.unshared": "Report link turned off",
-    "fix.apply_started": "Fix application started",
-    "fix.applied": "Fix applied",
-    "fix.skipped": "Fix skipped (value changed since audit)",
-    "fix.failed": "Fix failed",
-  };
-  return map[action] ?? action;
-}

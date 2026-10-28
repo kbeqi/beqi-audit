@@ -61,7 +61,7 @@ export function ChangeDiff({ changes }: { changes: { field: string; from: string
           <dd className="min-w-0 space-y-1">
             {c.from != null && c.from !== "" && (
               <div className="flex gap-2">
-                <span aria-hidden className="shrink-0 text-critical">−</span>
+                <span aria-hidden className="shrink-0 text-critical-text">−</span>
                 <Value v={c.from} removed />
               </div>
             )}
@@ -164,7 +164,7 @@ export function ProposalRow({ proposal, site, back, compact = false }: { proposa
               View {changes.length === 1 ? "the change" : `${changes.length} changes`} →
             </Link>
           )}
-          {proposal.error && <p className="mt-1.5 text-xs text-critical">{proposal.error}</p>}
+          {proposal.error && <p className="mt-1.5 text-xs text-critical-text">{proposal.error}</p>}
         </div>
         <div className={`shrink-0 ${compact ? "basis-full" : ""}`}>
           <DecisionButtons proposal={proposal} back={back} size="sm" />

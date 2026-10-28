@@ -5,9 +5,7 @@ import { usePathname } from "next/navigation";
 
 const ITEMS = [
   { href: "/", label: "Portfolio", match: (p: string) => p === "/" },
-  { href: "/clients", label: "Clients", match: (p: string) => p.startsWith("/clients") || p.startsWith("/sites") },
-  { href: "/fixes", label: "Fixes", match: (p: string) => p.startsWith("/fixes") },
-  { href: "/runs", label: "Audits", match: (p: string) => p.startsWith("/runs") },
+  { href: "/clients", label: "Clients", match: (p: string) => p.startsWith("/clients") || p.startsWith("/sites") || p.startsWith("/runs") || p.startsWith("/fixes") },
   { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team"), team: true },
 ];
 
