@@ -211,8 +211,9 @@ function visibilityFindings(answers: SampledAnswer[], s: AiVisibilitySummary): F
       const key = issue.toLowerCase().replace(/\s+/g, " ").slice(0, 120);
       if (seen.has(key)) continue;
       seen.add(key);
+      const label = issue.replace(/^says\s+/i, "");
       out.push(
-        draft("ai.inaccurate-claim", `AI answer says: ${issue.slice(0, 90)}${issue.length > 90 ? "…" : ""}`, `${engineLabel(a.engine)} stated this when asked "${a.prompt}". It contradicts what the site says. Make the correct fact explicit on the page that should answer this question.`, [`${engineLabel(a.engine)}: "${a.prompt}"`, issue], {
+        draft("ai.inaccurate-claim", `AI answer ${label.slice(0, 100)}${label.length > 100 ? "…" : ""}`, `${engineLabel(a.engine)} stated this when asked "${a.prompt}". It contradicts what the site says. Make the correct fact explicit on the page that should answer this question.`, [`${engineLabel(a.engine)}: "${a.prompt}"`, issue], {
           subject: key,
           confidence: "medium",
           effort: "moderate",

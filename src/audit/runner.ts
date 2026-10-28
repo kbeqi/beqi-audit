@@ -304,7 +304,9 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
     where: and(eq(schema.runs.siteId, site.id), eq(schema.runs.status, "complete"), ne(schema.runs.id, run.id)),
     orderBy: desc(schema.runs.createdAt),
   });
-  const newCriticalHigh = active.filter((f) => !stateByFp.has(f.fingerprint) && (f.draft.severity === "critical" || f.draft.severity === "high")).length;
+  // AI-sample findings are about assistants, not the site build, so they are
+  // not publish regressions.
+  const newCriticalHigh = active.filter((f) => !stateByFp.has(f.fingerprint) && f.draft.category !== "ai" && (f.draft.severity === "critical" || f.draft.severity === "high")).length;
   const regressions: RunSummary["regressions"] = {
     scoreDelta: previousRun?.scoreOverall === null || previousRun?.scoreOverall === undefined ? null : overall - previousRun.scoreOverall,
     newCriticalHigh,

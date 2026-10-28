@@ -92,7 +92,11 @@ export const AiAnswerJudgementSchema = z.object({
     z.object({
       index: z.number().int(),
       recommended: z.boolean().describe("The answer recommends or lists the brand as an option for the asker"),
-      issues: z.array(z.string()).describe("Claims about the brand in this answer that contradict the key facts; each one short and quoting the wrong claim. Empty when none."),
+      issues: z
+        .array(z.string())
+        .describe(
+          "Claims about the brand in this answer that contradict the key facts, in the canonical form 'says <wrong fact>; site says <correct fact>' (e.g. 'says HQ is Tampa, FL; site says Palm City, FL'). Use identical wording for the same mistake wherever it appears, so repeats across answers match. Empty when none.",
+        ),
     }),
   ),
 });
