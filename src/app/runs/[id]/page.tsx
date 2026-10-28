@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { eq } from "drizzle-orm";
+import { getDb, schema } from "@/db";
 import { runDetail } from "@/lib/queries";
 import { FindingsList } from "@/components/findings";
 import { LiveLog } from "@/components/live-log";
@@ -10,6 +13,14 @@ import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, Stat
 import { CATEGORY_LABELS, CATEGORY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const db = await getDb();
+  const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, id), columns: { siteId: true, status: true } });
+  const site = run ? await db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId), columns: { name: true } }) : null;
+  return { title: site ? `Audit · ${site.name}${run?.status === "running" ? " (running)" : ""}` : "Audit" };
+}
 
 export default async function RunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -60,7 +71,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
 
       <Card>
         <CardHeader title="Agent activity" description={live ? "Live" : `${events.length} events`} />
-        <LiveLog streamId={run.id} initial={events} live={live} compact={!live} />
+        <LiveLog streamId={run.id} initial={events} live={live} compact={!live} startedAt={run.startedAt ?? run.createdAt} />
       </Card>
 
       {run.status === "complete" && run.summary && (

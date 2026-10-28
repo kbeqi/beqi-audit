@@ -19,9 +19,22 @@ type Ev = Pick<RunEvent, "id" | "seq" | "kind" | "title" | "detail" | "createdAt
 
 // Shows an agent stream's activity and keeps polling while it is live. When a
 // terminal event arrives the server-rendered page data is refreshed too.
-export function LiveLog({ streamId, initial, live, compact = false }: { streamId: string; initial: Ev[]; live: boolean; compact?: boolean }) {
+export function LiveLog({ streamId, initial, live, compact = false, startedAt }: { streamId: string; initial: Ev[]; live: boolean; compact?: boolean; startedAt?: string | null }) {
   const [events, setEvents] = useState<Ev[]>(initial);
   const [polling, setPolling] = useState(live);
+  const [elapsed, setElapsed] = useState<string | null>(null);
+
+  // Elapsed time while live, so a long audit visibly moves.
+  useEffect(() => {
+    if (!polling || !startedAt) return;
+    const t0 = new Date(startedAt).getTime();
+    const fmt = () => {
+      const s = Math.max(0, Math.round((Date.now() - t0) / 1000));
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    };
+    const id = setInterval(() => setElapsed(fmt()), 1000);
+    return () => clearInterval(id);
+  }, [polling, startedAt]);
   const router = useRouter();
   const bottom = useRef<HTMLDivElement>(null);
   const lastSeq = events.length ? events[events.length - 1].seq : 0;
@@ -93,8 +106,10 @@ export function LiveLog({ streamId, initial, live, compact = false }: { streamId
           <span aria-hidden className="pulse text-center text-accent">
             ●
           </span>
-          <div className="text-ink-3">Working…</div>
-          <span />
+          <div className="text-ink-3">
+            Working… <span className="num">{events.length}</span> steps so far
+          </div>
+          <span className="text-xs text-ink-3 num">{elapsed ?? ""}</span>
         </div>
       )}
       <div ref={bottom} />

@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { eq } from "drizzle-orm";
+import { getDb, schema } from "@/db";
 import type { Severity } from "@/db/schema";
 import { siteDetail } from "@/lib/queries";
 import { deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
@@ -10,6 +13,13 @@ import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreR
 import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const db = await getDb();
+  const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, id), columns: { name: true } });
+  return { title: site?.name ?? "Site" };
+}
 
 export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string; saved?: string }> }) {
   const { id } = await params;

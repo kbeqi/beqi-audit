@@ -2,10 +2,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { proposalDetail } from "@/lib/queries";
 import { LiveLog } from "@/components/live-log";
-import { ChangeDiff, DecisionButtons, actionLabel } from "@/components/proposals";
+import type { Metadata } from "next";
+import type { FixAction } from "@/agent/catalog";
+import { ACTION_NOTES, ChangeDiff, DecisionButtons, actionLabel } from "@/components/proposals";
 import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ProposalStatusPill, RiskPill, SeverityPill, fmtDate, hostOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const data = await proposalDetail(id);
+  return { title: data ? `${data.proposal.title ?? actionLabel(data.proposal.action)} · ${data.site.name}` : "Fix" };
+}
 
 export default async function FixPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -52,7 +60,12 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
           )}
         </Notice>
       )}
-      {proposal.status === "failed" && <Notice tone="critical">Failed: {proposal.error ?? "unknown error"}. You can retry.</Notice>}
+      {proposal.status === "failed" && (
+        <Notice tone="critical">
+          <strong>Not applied.</strong> {proposal.error ?? "Unknown error."}
+          {proposal.action === "image_compress" ? " Retrying the same conversion will fail again; resize or re-export the image in Webflow instead." : " You can retry, or reject it."}
+        </Notice>
+      )}
       {proposal.status === "approved" && proposal.result?.status === "skipped" && (
         <Notice tone="warn">Skipped: {proposal.result.summary} Review the current value, then approve again if it still applies.</Notice>
       )}
@@ -68,6 +81,12 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
                 <div className="mt-4">
                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Why</div>
                   <p className="text-sm text-ink-2">{proposal.rationale}</p>
+                </div>
+              )}
+              {ACTION_NOTES[proposal.action as FixAction] && (
+                <div className="mt-4">
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-3">What applying does</div>
+                  <p className="text-sm text-ink-2">{ACTION_NOTES[proposal.action as FixAction]}</p>
                 </div>
               )}
             </div>

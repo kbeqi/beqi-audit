@@ -2,7 +2,8 @@ import Link from "next/link";
 import type { FixProposal, Site } from "@/db/schema";
 import type { FixAction } from "@/agent/catalog";
 import { decideProposal } from "@/app/actions";
-import { ProposalStatusPill, RiskPill, btnDanger, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
+import { ConfirmButton } from "./confirm-button";
+import { ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
 
 export const ACTION_LABELS: Record<FixAction, string> = {
   page_seo: "Page SEO settings",
@@ -19,6 +20,18 @@ export const ACTION_LABELS: Record<FixAction, string> = {
 export function actionLabel(action: string): string {
   return (ACTION_LABELS as Record<string, string>)[action] ?? action;
 }
+
+// What applying each kind of fix means for the site, shown before approval.
+export const ACTION_NOTES: Partial<Record<FixAction, string>> = {
+  page_seo: "Changes page settings in Webflow; goes live on the next publish.",
+  schema_markup: "Writes JSON-LD to the page settings; goes live on the next publish.",
+  sitemap_flag: "Changes the page's sitemap setting; goes live on the next publish.",
+  alt_text: "Updates the asset's alt text; takes effect immediately wherever the asset is used.",
+  heading_level: "Changes the element's heading tag; styling is unchanged. Goes live on the next publish.",
+  custom_code: "Edits head/footer code; goes live on the next publish.",
+  remove_script: "Removes an applied script; goes live on the next publish.",
+  image_compress: "Replaces the asset file in place and cannot be undone from here. Keep an original copy. Webflow refuses the conversion if it would not be smaller.",
+};
 
 // JSON values (schema markup) are shown pretty-printed; everything else as text.
 function prettyJson(v: string): string | null {
@@ -63,31 +76,33 @@ export function ChangeDiff({ changes }: { changes: { field: string; from: string
   );
 }
 
+// Two decisions: apply (Claude writes it now) or reject. "Approve for later"
+// was a dead end, since nothing applies approved rows on its own.
 export function DecisionButtons({ proposal, back, size = "md" }: { proposal: FixProposal; back: string; size?: "sm" | "md" }) {
   const sm = size === "sm" ? btnSm : "";
   const reviewable = proposal.status === "proposed" || proposal.status === "approved" || proposal.status === "failed";
   if (!reviewable) return null;
+  const risky = proposal.risk === "high" || proposal.action === "image_compress";
+  const applyLabel = proposal.status === "failed" ? "Retry" : "Approve & apply";
   return (
     <div className="flex flex-wrap gap-2">
       <form action={decideProposal}>
         <input type="hidden" name="proposalId" value={proposal.id} />
         <input type="hidden" name="decision" value="apply" />
         <input type="hidden" name="back" value={back} />
-        <button className={`${btnPrimary} ${sm}`}>{proposal.status === "failed" ? "Retry" : "Approve & apply"}</button>
+        {risky ? (
+          <ConfirmButton message={`${ACTION_NOTES[proposal.action as FixAction] ?? "This change is marked as higher risk."}\n\nApply it now?`} className={`${btnPrimary} ${sm}`}>
+            {applyLabel}
+          </ConfirmButton>
+        ) : (
+          <button className={`${btnPrimary} ${sm}`}>{applyLabel}</button>
+        )}
       </form>
-      {proposal.status === "proposed" && (
-        <form action={decideProposal}>
-          <input type="hidden" name="proposalId" value={proposal.id} />
-          <input type="hidden" name="decision" value="approve" />
-          <input type="hidden" name="back" value={back} />
-          <button className={`${btnSecondary} ${sm}`}>Approve only</button>
-        </form>
-      )}
       <form action={decideProposal}>
         <input type="hidden" name="proposalId" value={proposal.id} />
         <input type="hidden" name="decision" value="reject" />
         <input type="hidden" name="back" value={back} />
-        <button className={`${btnDanger} ${sm}`}>Reject</button>
+        <button className={`${btnSecondary} ${sm}`}>Reject</button>
       </form>
     </div>
   );
