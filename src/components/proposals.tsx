@@ -100,9 +100,24 @@ export function DecisionButtons({ proposal, back, size = "md" }: { proposal: Fix
       </form>
       <form action={decideProposal}>
         <input type="hidden" name="proposalId" value={proposal.id} />
+        <input type="hidden" name="decision" value="resolved" />
+        <input type="hidden" name="back" value={back} />
+        <SubmitButton
+          className={`${btnSecondary} ${sm}`}
+          confirm="Mark this as already fixed on the site by a person? Nothing is written to Webflow; the next audit re-checks it and reopens it if the issue is still there."
+          pendingLabel="Saving…"
+          title="A person already made this change in Webflow"
+        >
+          Fixed manually
+        </SubmitButton>
+      </form>
+      <form action={decideProposal}>
+        <input type="hidden" name="proposalId" value={proposal.id} />
         <input type="hidden" name="decision" value="reject" />
         <input type="hidden" name="back" value={back} />
-        <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Rejecting…">Reject</SubmitButton>
+        <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Rejecting…" title="Don't make this change">
+          Reject
+        </SubmitButton>
       </form>
     </div>
   );

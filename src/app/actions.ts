@@ -234,14 +234,33 @@ export async function decideProposal(formData: FormData) {
   return guarded("decideProposal", async () => {
     const actor = await currentActor();
     const id = String(formData.get("proposalId"));
-    const decision = String(formData.get("decision")) as "approve" | "reject" | "apply";
+    const decision = String(formData.get("decision")) as "approve" | "reject" | "apply" | "resolved";
     const back = String(formData.get("back") ?? "/fixes");
     const db = await getDb();
     const proposal = await db.query.fixProposals.findFirst({ where: eq(schema.fixProposals.id, id) });
     if (!proposal) throw new Error("Proposal not found");
     const reviewable = ["proposed", "approved", "failed"] as const;
 
-    if (decision === "reject") {
+    if (decision === "resolved") {
+      // A person made the change on the site. Close the proposal and the
+      // finding; the next audit re-verifies and reopens it if still present.
+      await db
+        .update(schema.fixProposals)
+        .set({
+          status: "resolved",
+          approvedBy: actor,
+          appliedBy: actor,
+          appliedAt: nowIso(),
+          error: null,
+          result: { status: "manual", summary: `Marked as fixed on the site by ${actor}.`, changesMade: [], verification: "Confirmed by a person; the next audit re-checks it.", needsPublish: false },
+        })
+        .where(and(eq(schema.fixProposals.id, id), inArray(schema.fixProposals.status, [...reviewable])));
+      await db
+        .update(schema.findingStates)
+        .set({ status: "fixed", note: `Fixed manually by ${actor} on ${nowIso().slice(0, 10)}`, updatedAt: nowIso() })
+        .where(and(eq(schema.findingStates.siteId, proposal.siteId), eq(schema.findingStates.fingerprint, proposal.fingerprint)));
+      await log("fix.resolved_manually", { proposalId: id, action: proposal.action }, proposal.siteId);
+    } else if (decision === "reject") {
       await db
         .update(schema.fixProposals)
         .set({ status: "rejected", approvedBy: actor })

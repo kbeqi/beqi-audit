@@ -322,7 +322,8 @@ export const snapshots = sqliteTable(
   (t) => [index("snapshots_site_kind_idx").on(t.siteId, t.kind, t.createdAt)],
 );
 
-export type ProposalStatus = "proposed" | "approved" | "applying" | "applied" | "rejected" | "reverted" | "failed";
+// "resolved": a person fixed it on the site themselves; the next audit confirms.
+export type ProposalStatus = "proposed" | "approved" | "applying" | "applied" | "resolved" | "rejected" | "reverted" | "failed";
 export type ProposalRisk = "low" | "medium" | "high";
 
 export interface ProposalChange {
@@ -341,7 +342,7 @@ export interface ProposalTarget {
 
 // What the fix agent reported after applying a proposal.
 export interface ProposalResult {
-  status: "applied" | "skipped" | "failed";
+  status: "applied" | "skipped" | "failed" | "manual";
   summary: string;
   changesMade: ProposalChange[];
   verification: string;

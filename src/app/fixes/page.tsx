@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function FixesPage() {
   await requireSignedIn("/fixes");
-  const [pending, done] = await Promise.all([pendingFixesAcrossPortfolio(), proposalsByStatus(["applied", "rejected", "failed"], 30)]);
+  const [pending, done] = await Promise.all([pendingFixesAcrossPortfolio(), proposalsByStatus(["applied", "resolved", "rejected", "failed"], 30)]);
   return (
     <div className="space-y-6">
       <PageHeader title="Fixes" description="Changes Claude proposed during audits. Approve one and Claude applies it through Webflow's MCP server, then reads it back to verify." />
@@ -24,7 +24,7 @@ export default async function FixesPage() {
         )}
       </Card>
       <Card>
-        <CardHeader title="Applied, rejected or failed" count={done.length} />
+        <CardHeader title="Applied, fixed manually, rejected or failed" count={done.length} />
         {done.length === 0 ? (
           <EmptyState title="No history yet" />
         ) : (

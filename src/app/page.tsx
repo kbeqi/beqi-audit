@@ -278,6 +278,7 @@ function humanAction(action: string): string {
     "finding.state_changed": "Finding status changed",
     "fix.approved": "Fix approved",
     "fix.rejected": "Fix rejected",
+    "fix.resolved_manually": "Fix marked as done by hand",
     "fix.apply_started": "Fix application started",
     "fix.applied": "Fix applied",
     "fix.skipped": "Fix skipped (value changed since audit)",

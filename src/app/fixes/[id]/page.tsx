@@ -64,6 +64,11 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
           )}
         </Notice>
       )}
+      {proposal.status === "resolved" && (
+        <Notice tone="good">
+          Fixed manually by {proposal.appliedBy ?? "a team member"} on {fmtDate(proposal.appliedAt)}. Nothing was written by Claude; the next audit confirms the issue is gone, and reopens it if not.
+        </Notice>
+      )}
       {proposal.status === "failed" && (
         <Notice tone="critical">
           <strong>Not applied.</strong> {proposal.error ?? "Unknown error."}

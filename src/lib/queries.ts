@@ -22,7 +22,7 @@ export interface ClientCard {
 }
 
 const OPEN_PROPOSAL_STATUSES = ["proposed", "approved", "applying"] as const;
-const SUPPRESSED = new Set(["ignored", "false_positive"]);
+const SUPPRESSED = new Set(["ignored", "false_positive", "fixed"]);
 
 // Small helper for D1's bound-parameter cap.
 async function chunked<T, R>(items: T[], size: number, fn: (chunk: T[]) => Promise<R[]>): Promise<R[]> {
@@ -56,7 +56,7 @@ export async function siteCards(sites: Site[]): Promise<SiteCard[]> {
     ? await chunked(latestIds, 60, (ids) => db.query.findings.findMany({ where: and(inArray(schema.findings.runId, ids), eq(schema.findings.ignored, false)) }))
     : [];
   const states = findings.length
-    ? await chunked(siteIds, 60, (ids) => db.query.findingStates.findMany({ where: and(inArray(schema.findingStates.siteId, ids), inArray(schema.findingStates.status, ["ignored", "false_positive"])) }))
+    ? await chunked(siteIds, 60, (ids) => db.query.findingStates.findMany({ where: and(inArray(schema.findingStates.siteId, ids), inArray(schema.findingStates.status, ["ignored", "false_positive", "fixed"])) }))
     : [];
   const suppressed = new Set(states.map((s) => `${s.siteId}|${s.fingerprint}`));
 
@@ -114,7 +114,7 @@ export async function openFindingsForRun(siteId: string, runId: string): Promise
   const rows = await db.query.findings.findMany({ where: and(eq(schema.findings.runId, runId), eq(schema.findings.ignored, false)) });
   if (rows.length === 0) return [];
   const states = await db.query.findingStates.findMany({
-    where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.status, ["ignored", "false_positive"])),
+    where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.status, ["ignored", "false_positive", "fixed"])),
     columns: { fingerprint: true },
   });
   const suppressed = new Set(states.map((s) => s.fingerprint));

@@ -38,7 +38,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
   const severity = (SEVERITY_ORDER as string[]).includes(sev ?? "") ? (sev as Severity) : "all";
   const newFps = new Set(findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === latest?.id).map((f) => f.fingerprint));
   const openProposals = proposals.filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying" || p.status === "failed");
-  const doneProposals = proposals.filter((p) => p.status === "applied" || p.status === "rejected").slice(0, 10);
+  const doneProposals = proposals.filter((p) => p.status === "applied" || p.status === "resolved" || p.status === "rejected").slice(0, 10);
   const counts = Object.fromEntries(SEVERITY_ORDER.map((s) => [s, findings.filter((f) => f.severity === s).length])) as Record<Severity, number>;
 
   return (

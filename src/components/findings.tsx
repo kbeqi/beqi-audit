@@ -59,7 +59,7 @@ function FindingRow({ f, siteId, baseUrl, back, proposals, isNew }: { f: Finding
   const data = (f.data ?? {}) as { evidence?: string[] };
   const evidence = Array.isArray(data.evidence) ? data.evidence.filter((e) => typeof e === "string" && e.trim()) : [];
   const open = proposals.find((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying");
-  const applied = proposals.find((p) => p.status === "applied");
+  const applied = proposals.find((p) => p.status === "applied" || p.status === "resolved");
   return (
     <li className={`px-5 py-3 ${f.ignored ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-start gap-3">
@@ -103,7 +103,7 @@ function FindingRow({ f, siteId, baseUrl, back, proposals, isNew }: { f: Finding
               )}
               {applied && !open && (
                 <Link href={`/fixes/${applied.id}`} className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium tone-good">
-                  Fix applied {applied.result?.needsPublish ? "· publish to go live" : ""} →
+                  {applied.status === "resolved" ? "Fixed manually" : `Fix applied${applied.result?.needsPublish ? " · publish to go live" : ""}`} →
                 </Link>
               )}
             </div>
