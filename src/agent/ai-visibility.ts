@@ -269,16 +269,19 @@ async function askPerplexity(key: string, prompt: string): Promise<{ answer: str
 }
 
 async function askClaude(client: Anthropic, prompt: string, usage: RunUsage): Promise<{ answer: string; citations: string[] }> {
-  const res = await client.beta.messages.create({
-    model: MODEL,
-    max_tokens: 4000,
-    betas: BETAS,
-    fallbacks: "default",
-    output_config: { effort: "low" },
-    system: "You are a general-purpose assistant answering a member of the public. Search the web, then answer as you normally would: name specific businesses, products or sources when they fit, with the links you relied on.",
-    tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
-    messages: [{ role: "user", content: prompt }],
-  });
+  // Streamed so a slow search round-trip is never cut off at the edge.
+  const res = await client.beta.messages
+    .stream({
+      model: MODEL,
+      max_tokens: 4000,
+      betas: BETAS,
+      fallbacks: "default",
+      output_config: { effort: "low" },
+      system: "You are a general-purpose assistant answering a member of the public. Search the web, then answer as you normally would: name specific businesses, products or sources when they fit, with the links you relied on.",
+      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
+      messages: [{ role: "user", content: prompt }],
+    })
+    .finalMessage();
   addUsage(usage, res.usage);
   if (res.stop_reason === "refusal") throw new Error("the model declined");
   const text: string[] = [];

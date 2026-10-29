@@ -1,5 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { stepAgent, stepAiVisibility, stepAnalyze, stepFinalize, stepMetrics, stepPrepare } from "./runner";
+import { stepAgent, stepAiVisibility, stepAnalyze, stepFinalize, stepMetrics, stepPrepare, stepStructure } from "./runner";
 import { applyProposal } from "./fixer";
 import type { AuditWorkflowParams } from "./start";
 
@@ -23,6 +23,7 @@ export class AuditRunWorkflow extends WorkflowEntrypoint<CloudflareEnv, AuditWor
       await step.do("prepare", quick, () => stepPrepare(env, runId));
       await step.do("metrics", slow, () => stepMetrics(env, runId));
       await step.do("agent", agent, () => stepAgent(env, runId));
+      await step.do("structure", slow, () => stepStructure(env, runId));
       // The AI sample is optional: a failure here must not fail the audit.
       await step.do("ai-visibility", slow, () => stepAiVisibility(env, runId)).catch((e) => console.warn("ai visibility step failed", e));
       const result = await step.do("analyze", quick, () => stepAnalyze(env, runId));

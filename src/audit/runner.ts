@@ -9,7 +9,7 @@ import { parseRecipients, resultsEmail, sendEmail } from "@/lib/email";
 import { appUrl } from "@/lib/env";
 import { newId, nowIso, sha256Hex } from "@/lib/id";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
-import { runAuditAgent } from "@/agent/audit";
+import { runAuditAgent, structureAuditReport } from "@/agent/audit";
 import { sampleAiVisibility } from "@/agent/ai-visibility";
 import { CHECKS, isCheckId } from "@/agent/catalog";
 import { createEventSink } from "@/agent/events";
@@ -75,7 +75,7 @@ export async function stepMetrics(env: RunEnv, runId: string): Promise<{ pages: 
 }
 
 // Step 3: the agent audits the site; raw outputs go to KV.
-export async function stepAgent(env: RunEnv, runId: string): Promise<{ findings: number; proposals: number }> {
+export async function stepAgent(env: RunEnv, runId: string): Promise<{ reportChars: number; blockedHosts: number }> {
   const { db, run, site, client, connection } = await loadRun(env, runId);
   if (!connection) throw new Error("Site has no active Webflow connection");
   const fresh = await ensureFreshConnection(env, connection);
@@ -102,11 +102,23 @@ export async function stepAgent(env: RunEnv, runId: string): Promise<{ findings:
     psiSummary: psi?.summaryText ?? null,
     emit: createEventSink(env, run.id),
   });
-  await putJson(env.AUDIT_STORE, runKey(run.id, "report"), out.report);
-  await putJson(env.AUDIT_STORE, runKey(run.id, "report-text"), { text: out.reportText });
+  await putJson(env.AUDIT_STORE, runKey(run.id, "report-text"), { text: out.reportText, blockedHosts: out.blockedHosts });
   await putJson(env.AUDIT_STORE, runKey(run.id, "transcript"), out.messages);
-  await db.update(schema.runs).set({ usage: out.usage, agentSummary: out.report.summary, highlights: out.report.highlights }).where(eq(schema.runs.id, run.id));
-  return { findings: out.report.findings.length, proposals: out.report.proposals.length };
+  await db.update(schema.runs).set({ usage: out.usage }).where(eq(schema.runs.id, run.id));
+  return { reportChars: out.reportText.length, blockedHosts: out.blockedHosts.length };
+}
+
+// Step 3b: turn the written report into validated JSON. Its own step so a
+// failure here is retried without re-running the whole agent conversation.
+export async function stepStructure(env: RunEnv, runId: string): Promise<{ findings: number; proposals: number }> {
+  const { db, run } = await loadRun(env, runId);
+  const stored = await getJson<{ text: string }>(env.AUDIT_STORE, runKey(run.id, "report-text"));
+  if (!stored?.text) throw new Error("audit report text missing");
+  const usage = run.usage ?? emptyUsage();
+  const report = await structureAuditReport(env, stored.text, usage, createEventSink(env, run.id));
+  await putJson(env.AUDIT_STORE, runKey(run.id, "report"), report);
+  await db.update(schema.runs).set({ usage, agentSummary: report.summary, highlights: report.highlights }).where(eq(schema.runs.id, run.id));
+  return { findings: report.findings.length, proposals: report.proposals.length };
 }
 
 // Step 4: ask AI assistants the customer's questions and record how the brand
@@ -386,6 +398,7 @@ export async function runAuditInline(env: RunEnv, runId: string): Promise<void> 
     await stepPrepare(env, runId);
     await stepMetrics(env, runId);
     await stepAgent(env, runId);
+    await stepStructure(env, runId);
     await stepAiVisibility(env, runId).catch((e) => console.warn("ai visibility failed", e));
     await stepAnalyze(env, runId);
     await stepFinalize(env, runId);

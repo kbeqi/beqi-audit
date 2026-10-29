@@ -133,22 +133,32 @@ export function expiresAtFrom(tokens: OAuthTokens): string | null {
   return tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000).toISOString() : null;
 }
 
-// Refreshes the connection's access token when it is about to expire. Returns
-// the connection to use (updated in place in D1 when a refresh happened).
+// An audit's agent step can run for up to 30 minutes on one token, so a token
+// is refreshed when it would not survive that. Webflow tokens last an hour.
+const REFRESH_WHEN_LESS_THAN_MS = 45 * 60 * 1000;
+
+// Refreshes the connection's access token when it would expire during a run.
+// Returns the connection to use (updated in place in D1 when a refresh
+// happened). Refresh tokens rotate, so when two runs share a connection the
+// row is re-read first: if another run just refreshed it, that token is used.
 export async function ensureFreshConnection(
   env: Pick<CloudflareEnv, "DB" | "WEBFLOW_MCP_URL" | "APP_URL">,
   connection: WebflowConnection,
 ): Promise<WebflowConnection> {
   if (connection.authKind !== "mcp_oauth") return connection;
   if (!connection.expiresAt || !connection.refreshToken) return connection;
-  if (new Date(connection.expiresAt).getTime() - Date.now() > 2 * 60 * 1000) return connection;
+  const fresh = (iso: string | null) => !!iso && new Date(iso).getTime() - Date.now() > REFRESH_WHEN_LESS_THAN_MS;
+  if (fresh(connection.expiresAt)) return connection;
+  const current = await dbFromEnv(env).query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, connection.id) });
+  if (current && fresh(current.expiresAt)) return current;
+  if (current?.refreshToken) connection = current;
 
   const redirectUri = `${env.APP_URL.replace(/\/$/, "")}/api/webflow/callback`;
   const st: ProviderState = {
     clientInfo: connection.mcpClientId
       ? { client_id: connection.mcpClientId, ...(connection.mcpClientSecret ? { client_secret: connection.mcpClientSecret } : {}), ...clientMetadata(redirectUri) }
       : undefined,
-    tokens: { access_token: connection.accessToken, refresh_token: connection.refreshToken, token_type: "bearer" },
+    tokens: { access_token: connection.accessToken, refresh_token: connection.refreshToken ?? undefined, token_type: "bearer" },
   };
   const provider = makeProvider({ redirectUri, state: st, stateValue: () => crypto.randomUUID() });
   const result = await auth(provider, { serverUrl: connection.mcpServerUrl ?? env.WEBFLOW_MCP_URL });

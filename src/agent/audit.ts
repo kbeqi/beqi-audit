@@ -13,6 +13,11 @@ import { AuditReportSchema, type AuditReport } from "./schemas";
 import { AUDIT_TOOLS, actionsOfToolCall, describeToolCall, isWriteAction, webflowMcpServer, webflowToolset } from "./webflow-mcp";
 
 const MAX_CONTINUATIONS = 12;
+// The Workflow step allows 30 minutes; stop continuing before that so the run
+// fails with a clear message instead of being killed.
+const AGENT_DEADLINE_MS = 24 * 60 * 1000;
+// A report longer than this is trimmed to its JSON block before structuring.
+const REPORT_TEXT_SOFT_LIMIT = 60_000;
 const WEB_FETCH_MAX_USES = 60;
 // Each fetched page stays in the conversation for every later turn, so the
 // per-fetch cap is the main cost lever. 12K tokens covers a marketing page's
@@ -35,12 +40,13 @@ export interface AuditAgentInput {
 }
 
 export interface AuditAgentOutput {
-  report: AuditReport;
   reportText: string;
   usage: RunUsage;
   // Full conversation, for the transcript store.
   messages: Anthropic.Beta.BetaMessageParam[];
   writeAttempts: string[];
+  // Hosts whose fetches were refused with url_not_allowed (robots / bot protection).
+  blockedHosts: string[];
 }
 
 export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentOutput> {
@@ -59,11 +65,17 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
     { role: "user", content: auditTaskPrompt({ site, clientName, agentId, pageBudget, linkBudget: 40, previous, psiSummary }) },
   ];
   const writeAttempts: string[] = [];
+  const blockedHosts = new Set<string>();
+  // server_tool_use id -> url, so a fetch error can be attributed to its host.
+  const fetchUrls = new Map<string, string>();
   let finalText = "";
 
   await emit("status", `Auditing ${site.name} with ${MODEL}`, { host, pageBudget });
 
   for (let turn = 0; turn <= MAX_CONTINUATIONS; turn++) {
+    if (Date.now() - started > AGENT_DEADLINE_MS) {
+      throw new Error(`Audit ran out of time after ${Math.round((Date.now() - started) / 60000)} minutes; lower the site's page budget and run again`);
+    }
     const stream = client.beta.messages.stream({
       model: MODEL,
       max_tokens: 64000,
@@ -81,7 +93,7 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
     });
 
     stream.on("contentBlock", (block) => {
-      void logBlock(block, emit, usage, writeAttempts);
+      void logBlock(block, emit, usage, writeAttempts, blockedHosts, fetchUrls);
     });
 
     const message = await stream.finalMessage();
@@ -110,34 +122,67 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
   if (writeAttempts.length) {
     throw new Error(`Audit aborted: the agent attempted write actions (${writeAttempts.slice(0, 5).join(", ")})`);
   }
-
-  await emit("status", "Structuring the report");
-  const report = await structureReport(client, finalText, usage);
   usage.durationMs = Date.now() - started;
+  await emit("status", `Report written (${Math.round(finalText.length / 1000)}K characters)${blockedHosts.size ? `; live site blocked Claude's fetcher: ${[...blockedHosts].join(", ")}` : ""}`, {
+    length: finalText.length,
+    blockedHosts: [...blockedHosts],
+  });
+  return { reportText: finalText, usage, messages, writeAttempts, blockedHosts: [...blockedHosts] };
+}
+
+// Second pass, run as its own pipeline step: no tools, strict JSON schema.
+// Cheap relative to the audit, and retried on its own if it fails.
+export async function structureAuditReport(env: AgentEnv, reportText: string, usage: RunUsage, emit: EventSink): Promise<AuditReport> {
+  const client = getAnthropic(env);
+  await emit("status", "Structuring the report");
+  let text = reportText;
+  if (text.length > REPORT_TEXT_SOFT_LIMIT) {
+    // Keep the JSON block (the source of truth) and the summary before it.
+    const m = /```json\s*([\s\S]*?)```/i.exec(text);
+    const json = m?.[1]?.trim();
+    const summary = m ? text.slice(0, m.index).trim().slice(0, 8_000) : "";
+    text = json ? `${summary}\n\n\`\`\`json\n${json}\n\`\`\`` : text.slice(0, REPORT_TEXT_SOFT_LIMIT);
+    await emit("warning", `Report is long (${Math.round(reportText.length / 1000)}K characters); structuring from its JSON block only`);
+  }
+  // Streamed: a large JSON output takes minutes, and a non-streaming request
+  // that long is cut off (HTTP 524) before the API answers.
+  const message = await client.messages
+    .stream(
+      {
+        model: MODEL,
+        max_tokens: 48000,
+        system: STRUCTURE_SYSTEM_PROMPT,
+        output_config: { format: zodOutputFormat(AuditReportSchema), effort: "medium" },
+        messages: [{ role: "user", content: `Convert this audit report to the schema.\n\n${text}` }],
+      },
+      { timeout: 20 * 60 * 1000 },
+    )
+    .finalMessage();
+  addUsage(usage, message.usage);
+  if (message.stop_reason === "max_tokens") throw new Error("The audit report is too long to structure; lower the site's page budget and run again");
+  const json = message.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("");
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    throw new Error("Could not structure the audit report (invalid JSON)");
+  }
+  const result = AuditReportSchema.safeParse(raw);
+  if (!result.success) throw new Error(`Could not structure the audit report: ${result.error.issues[0]?.message ?? "schema mismatch"}`);
+  const report = result.data;
   await emit("done", `Report ready: ${report.findings.length} findings, ${report.proposals.length} proposed fixes`, {
     pagesReviewed: report.siteFacts.pagesReviewed,
     costUsd: usage.estimatedCostUsd,
   });
-  return { report, reportText: finalText, usage, messages, writeAttempts };
-}
-
-// Second pass: no tools, strict JSON schema. Cheap relative to the audit.
-async function structureReport(client: Anthropic, reportText: string, usage: RunUsage): Promise<AuditReport> {
-  const parsed = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 32000,
-    system: STRUCTURE_SYSTEM_PROMPT,
-    output_config: { format: zodOutputFormat(AuditReportSchema), effort: "medium" },
-    messages: [{ role: "user", content: `Convert this audit report to the schema.\n\n${reportText}` }],
-  });
-  addUsage(usage, parsed.usage);
-  if (!parsed.parsed_output) throw new Error("Could not structure the audit report");
-  return parsed.parsed_output;
+  return report;
 }
 
 // Mirrors each completed content block into the activity log and the write
 // guard. Runs as blocks complete; the stream itself is unaffected.
-async function logBlock(block: Anthropic.Beta.BetaContentBlock, emit: EventSink, usage: RunUsage, writeAttempts: string[]): Promise<void> {
+async function logBlock(block: Anthropic.Beta.BetaContentBlock, emit: EventSink, usage: RunUsage, writeAttempts: string[], blockedHosts: Set<string>, fetchUrls: Map<string, string>): Promise<void> {
   switch (block.type) {
     case "mcp_tool_use": {
       usage.toolCalls += 1;
@@ -161,13 +206,24 @@ async function logBlock(block: Anthropic.Beta.BetaContentBlock, emit: EventSink,
       if (block.name === "web_fetch") {
         usage.webFetches += 1;
         const url = (block.input as { url?: string } | null)?.url;
+        if (url) fetchUrls.set(block.id, url);
         await emit("fetch", `Fetching ${url ?? "page"}`, { url });
       }
       return;
     }
     case "web_fetch_tool_result": {
       const c = block.content as { type: string; url?: string; error_code?: string };
-      if (c.type === "web_fetch_tool_result_error") await emit("warning", `Fetch failed: ${c.error_code ?? "error"}`, { url: c.url });
+      if (c.type === "web_fetch_tool_result_error") {
+        const url = c.url ?? fetchUrls.get(block.tool_use_id);
+        if (c.error_code === "url_not_allowed" && url) {
+          try {
+            blockedHosts.add(new URL(url).host);
+          } catch {
+            /* unparsable url */
+          }
+        }
+        await emit("warning", `Fetch failed: ${c.error_code ?? "error"}${c.error_code === "url_not_allowed" ? " (the site blocks Claude's fetcher)" : ""}`, { url });
+      }
       return;
     }
     case "text": {
