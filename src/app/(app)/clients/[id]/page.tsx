@@ -4,8 +4,9 @@ import { notFound } from "next/navigation";
 import { clientDetail } from "@/lib/queries";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { Markdown } from "@/components/markdown";
-import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, ScoreRing, StatTile, btnSecondary, btnSm, fmtDate, scoreTone, timeAgo } from "@/components/ui";
-import { CATEGORY_HINTS, CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
+import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, ScoreRing, StatTile, btnSecondary, btnSm, fmtDate, timeAgo } from "@/components/ui";
+import { CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
+import { CategoryStrip } from "@/components/category-strip";
 import { humanAction } from "@/lib/activity";
 
 export const dynamic = "force-dynamic";
@@ -94,20 +95,13 @@ export default async function ClientOverview({ params, searchParams }: { params:
                 </Link>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {SCORED_CATEGORIES.map((cat) => {
-                const score = latest.scores?.[cat];
-                const tone = scoreTone(score);
-                return (
-                  <div key={cat} className="rounded-lg border border-line px-3 py-2" title={CATEGORY_HINTS[cat]}>
-                    <div className="truncate text-[11px] font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
-                    <div className="mt-0.5 flex items-end justify-between">
-                      <div className={`text-xl font-semibold leading-none ${tone === "critical" ? "text-critical-text" : "text-ink"}`}>{score ?? "–"}</div>
-                      <Delta now={score} before={previousOfLatest?.scores?.[cat]} />
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="min-w-0">
+              <CategoryStrip
+                sticky={false}
+                hrefBase={`/sites/${latestSite.site.id}`}
+                items={SCORED_CATEGORIES.map((cat) => ({ cat, label: CATEGORY_LABELS[cat], score: latest.scores?.[cat], count: latest.summary?.findingsByCategory[cat] ?? 0 }))}
+              />
+              <p className="mt-2 text-xs text-ink-3">Each gauge opens that area on the site page.</p>
             </div>
           </div>
           {(latest.summary?.aiVisibility?.answers || latest.summary?.perf) && (

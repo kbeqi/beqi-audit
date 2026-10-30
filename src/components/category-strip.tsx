@@ -15,9 +15,10 @@ export interface StripItem {
 
 // Sticky row of small score gauges, one per area, each an anchor to its
 // section (the Lighthouse pattern). The area in view is underlined.
-export function CategoryStrip({ items }: { items: StripItem[] }) {
+export function CategoryStrip({ items, sticky = true, hrefBase = "" }: { items: StripItem[]; sticky?: boolean; hrefBase?: string }) {
   const [active, setActive] = useState<string | null>(null);
   useEffect(() => {
+    if (!sticky) return;
     const sections = items.map((i) => document.getElementById(`area-${i.cat}`)).filter((el): el is HTMLElement => !!el);
     if (!sections.length || typeof IntersectionObserver === "undefined") return;
     const io = new IntersectionObserver(
@@ -29,11 +30,11 @@ export function CategoryStrip({ items }: { items: StripItem[] }) {
     );
     sections.forEach((s) => io.observe(s));
     return () => io.disconnect();
-  }, [items]);
+  }, [items, sticky]);
 
   return (
-    <nav aria-label="Areas" className="sticky top-0 z-10 -mx-4 border-b border-line bg-surface/95 px-4 py-2 backdrop-blur lg:-mx-8 lg:px-8">
-      <ul className="flex gap-1 overflow-x-auto">
+    <nav aria-label="Areas" className={sticky ? "sticky top-0 z-10 -mx-4 border-b border-line bg-surface/95 px-4 py-2 backdrop-blur lg:-mx-8 lg:px-8" : ""}>
+      <ul className={`flex gap-1 overflow-x-auto ${sticky ? "" : "flex-wrap"}`}>
         {items.map((i) => {
           const tone = scoreTone(i.score);
           const color = i.note !== undefined ? "var(--line-2)" : tone === "neutral" ? "var(--line-2)" : `var(--${tone})`;
@@ -44,7 +45,7 @@ export function CategoryStrip({ items }: { items: StripItem[] }) {
           return (
             <li key={i.cat} className="shrink-0">
               <a
-                href={`#area-${i.cat}`}
+                href={`${hrefBase}#area-${i.cat}`}
                 aria-current={isActive ? "location" : undefined}
                 className={`flex items-center gap-2 rounded-lg px-2 py-1 text-xs font-medium transition-colors hover:bg-surface-2 ${isActive ? "bg-surface-2 text-ink" : "text-ink-2"}`}
                 title={i.count === 0 ? `${i.label}: nothing found` : `${i.label}: ${i.count} finding${i.count === 1 ? "" : "s"}`}

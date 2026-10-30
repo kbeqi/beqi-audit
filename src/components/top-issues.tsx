@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Finding, FixProposal, Severity } from "@/db/schema";
-import { CATEGORY_LABELS } from "@/audit/score";
+import { CATEGORY_LABELS, CLIENT_LABELS } from "@/audit/score";
 import { EffortPill, SeverityPill } from "./ui";
 
 const SEV: Record<Severity, number> = { critical: 100, high: 60, medium: 30, low: 10, info: 0 };
@@ -17,8 +17,10 @@ export function rankFindings(findings: Finding[]): Finding[] {
     .map((x) => x.f);
 }
 
-export function TopIssues({ findings, proposals = [], limit = 6, readOnly = false, baseUrl }: { findings: Finding[]; proposals?: FixProposal[]; limit?: number; readOnly?: boolean; baseUrl: string }) {
-  const ranked = rankFindings(findings).slice(0, limit);
+export function TopIssues({ findings, proposals = [], limit, readOnly = false, baseUrl, audience = "team" }: { findings: Finding[]; proposals?: FixProposal[]; limit?: number; readOnly?: boolean; baseUrl: string; audience?: "team" | "client" }) {
+  const client = audience === "client";
+  const LABELS = client ? CLIENT_LABELS : CATEGORY_LABELS;
+  const ranked = rankFindings(findings).slice(0, limit ?? (client ? 3 : 6));
   if (ranked.length === 0) return null;
   const openProposal = (f: Finding) => proposals.find((p) => p.findingId === f.id && (p.status === "proposed" || p.status === "approved" || p.status === "applying"));
   return (
@@ -26,9 +28,9 @@ export function TopIssues({ findings, proposals = [], limit = 6, readOnly = fals
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-5 py-3.5">
         <div>
           <h2 id="top-issues" className="text-sm font-semibold text-ink">
-            Fix first
+            {client ? `${ranked.length === 1 ? "The one thing" : ranked.length === 2 ? "Two things" : "Three things"} to do first` : "Fix first"}
           </h2>
-          <p className="text-xs text-ink-3">Ranked by how much each one matters and how quick it is to fix. Everything else is in the areas below.</p>
+          <p className="text-xs text-ink-3">{client ? "The changes that make the most difference, in order. Beqi can apply the ones marked quick win with your approval." : "Ranked by how much each one matters and how quick it is to fix. Everything else is in the areas below."}</p>
         </div>
         <a href="#areas" className="text-xs font-medium text-accent hover:underline">
           All findings
@@ -48,14 +50,14 @@ export function TopIssues({ findings, proposals = [], limit = 6, readOnly = fals
                   <SeverityPill severity={f.severity} />
                   <EffortPill effort={f.effort} />
                   <span className="text-xs text-ink-3">
-                    {CATEGORY_LABELS[f.category]}
+                    {LABELS[f.category]}
                     {f.pagePath ? ` · ${f.pagePath}` : ""}
                   </span>
                 </div>
                 <a href={href} className="mt-1 block text-sm font-medium text-ink hover:underline">
                   {f.title}
                 </a>
-                {f.detail && <p className="mt-0.5 line-clamp-2 text-sm text-ink-2">{f.detail}</p>}
+                {f.detail && <p className="mt-0.5 line-clamp-2 text-sm text-ink-2">{client ? <><span className="font-medium text-ink-3">Why it matters: </span>{f.detail}</> : f.detail}</p>}
               </div>
               {proposal && (
                 <Link href={`/fixes/${proposal.id}`} className="shrink-0 rounded-md px-2 py-1 text-xs font-medium tone-accent hover:brightness-95">

@@ -83,7 +83,7 @@ export function Report({
         </section>
       )}
 
-      <TopIssues findings={findings} baseUrl={baseUrl} readOnly />
+      <TopIssues findings={findings} baseUrl={baseUrl} readOnly audience="client" />
 
       <section aria-labelledby="areas-title">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
@@ -106,6 +106,7 @@ export function Report({
           baseUrl={baseUrl}
           back=""
           readOnly
+          audience="client"
           aiSummary={run.summary?.aiVisibility}
           extras={{
             ...(metrics.length > 0 || run.summary?.perf ? { performance: <PerformanceCard metrics={metrics} unavailable={run.summary?.perf?.unavailable} embedded /> } : {}),
@@ -133,9 +134,25 @@ export function Report({
       )}
 
 
-      <p className="text-xs text-ink-3">
-        Severity: critical and high need attention soon; medium and low are improvements; info is for awareness. Scores are per category and combined into the overall score. &ldquo;Quick win&rdquo; marks fixes that take minutes. AI visibility is a small sample of assistant answers and is not part of the score.
-      </p>
+      <section aria-labelledby="glossary" className="rounded-xl bg-surface-2 p-5">
+        <h2 id="glossary" className="mb-2 text-sm font-semibold text-ink">
+          How to read this report
+        </h2>
+        <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+          <div>
+            <dt className="font-medium text-ink">High, medium, low</dt>
+            <dd className="text-ink-2">How much the issue affects visitors or search. High ones first; info is for awareness only.</dd>
+          </div>
+          <div>
+            <dt className="font-medium text-ink">Quick win</dt>
+            <dd className="text-ink-2">Minutes of work in Webflow, often something Beqi can apply with your approval.</dd>
+          </div>
+          <div>
+            <dt className="font-medium text-ink">Score</dt>
+            <dd className="text-ink-2">0–100 per area, combined into the overall score. 100 means nothing was found. The AI answers sample is not part of the score.</dd>
+          </div>
+        </dl>
+      </section>
     </article>
   );
 }
