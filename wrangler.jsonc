@@ -29,7 +29,7 @@
   },
   "triggers": {
     // Scheduler tick: starts audit runs for every site whose next_run_at is due.
-    "crons": ["0 * * * *"]
+    "crons": ["*/20 * * * *"]
   },
   "services": [
     // Self-reference service binding required by OpenNext (name must match "name" above).

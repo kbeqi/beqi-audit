@@ -54,4 +54,4 @@ Secrets (`wrangler secret put` / `.dev.vars`): `ANTHROPIC_API_KEY`; `RESEND_API_
 
 ## Client emails (`src/lib/email.ts`)
 
-Per client: `notify_email` (comma-separated), `notify_reminder`, `notify_results`. The hourly scheduler sends one reminder per upcoming scheduled audit (`sites.reminder_sent_for` guards it, set before sending); `stepFinalize` sends results on a complete run. Sending goes through Resend's HTTP API and never throws; outcomes are `email.sent|skipped|failed` rows in `audit_log`.
+Per client: `notify_email` (comma-separated), `notify_reminder`, `notify_results`. The scheduler (cron every 20 minutes) first refreshes every active Webflow connection with under 45 minutes left (Webflow's refresh tokens only work while the access token is still valid; an expired one needs a person to reconnect, logged as `webflow.refresh_failed`), then starts due runs, then sends one reminder per upcoming scheduled audit (`sites.reminder_sent_for` guards it, set before sending); `stepFinalize` sends results on a complete run. Sending goes through Resend's HTTP API and never throws; outcomes are `email.sent|skipped|failed` rows in `audit_log`.

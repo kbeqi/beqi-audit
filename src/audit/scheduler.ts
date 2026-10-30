@@ -1,16 +1,21 @@
 import { and, eq, gt, isNotNull, lte, ne, or, isNull } from "drizzle-orm";
 import { dbFromEnv, schema } from "@/db";
+import { newId } from "@/lib/id";
 import { parseRecipients, reminderEmail, sendEmail } from "@/lib/email";
 import { appUrl } from "@/lib/env";
+import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startRun } from "./start";
 
 const REMINDER_WINDOW_MS = 26 * 60 * 60 * 1000;
 
-// Cron tick (hourly). Starts a run for every site whose schedule is due and
-// moves next_run_at forward before starting so a slow run can't double-fire.
-// Then sends one reminder per upcoming scheduled audit (about a day ahead).
-export async function runScheduler(env: CloudflareEnv, now: Date): Promise<{ started: string[]; reminders: number }> {
+// Cron tick (every 20 minutes). Keeps Webflow tokens alive, starts a run for
+// every site whose schedule is due (next_run_at moves forward before starting
+// so a slow run can't double-fire), then sends one reminder per upcoming
+// scheduled audit (about a day ahead). Every part is idempotent, so a more
+// frequent tick is safe.
+export async function runScheduler(env: CloudflareEnv, now: Date): Promise<{ started: string[]; reminders: number; refreshed: number }> {
   const db = dbFromEnv(env);
+  const refreshed = await keepConnectionsAlive(env, now);
   const due = await db.query.sites.findMany({
     where: and(
       ne(schema.sites.auditFrequency, "off"),
@@ -55,5 +60,32 @@ export async function runScheduler(env: CloudflareEnv, now: Date): Promise<{ sta
     );
     if (result === "sent") reminders++;
   }
-  return { started, reminders };
+  return { started, reminders, refreshed };
+}
+
+// Webflow's MCP refresh tokens only work while the access token is still
+// valid: once a token has expired, the grant is gone and the workspace must
+// be connected again by a person. Tokens last an hour, so every tick refreshes
+// any active connection with under 45 minutes left (ensureFreshConnection's
+// threshold), keeping idle connections alive between audits.
+async function keepConnectionsAlive(env: CloudflareEnv, now: Date): Promise<number> {
+  const db = dbFromEnv(env);
+  const connections = await db.query.webflowConnections.findMany({ where: and(isNull(schema.webflowConnections.revokedAt), eq(schema.webflowConnections.authKind, "mcp_oauth")) });
+  let refreshed = 0;
+  for (const c of connections) {
+    if (!c.expiresAt || !c.refreshToken) continue;
+    if (new Date(c.expiresAt).getTime() <= now.getTime()) continue; // already lost; needs a reconnect
+    try {
+      const fresh = await ensureFreshConnection(env, c);
+      if (fresh.expiresAt !== c.expiresAt) refreshed++;
+    } catch (e) {
+      await db.insert(schema.auditLog).values({
+        id: newId(),
+        actor: "system",
+        action: "webflow.refresh_failed",
+        detail: { connectionId: c.id, clientId: c.clientId, error: String((e as Error).message ?? e).slice(0, 300) },
+      });
+    }
+  }
+  return refreshed;
 }

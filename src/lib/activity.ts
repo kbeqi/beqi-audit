@@ -14,6 +14,7 @@ const LABELS: Record<string, string> = {
   "run.publish_triggered": "Site published; audit started",
   "run.publish_skipped": "Site published; audit not started",
   "webflow.webhook_registered": "Publish webhook registered",
+  "webflow.refresh_failed": "Webflow token could not be refreshed (reconnect the workspace)",
   "webflow.webhook_failed": "Publish webhook could not be registered",
   "run.shared": "Report link created",
   "run.unshared": "Report link turned off",
