@@ -1,12 +1,12 @@
 import type { AiVisibilitySummary, CategoryKey, CategoryScores, Finding, FixProposal, Severity } from "@/db/schema";
 import { CATEGORY_HINTS, CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
 import { FindingsList } from "./findings";
+import { CategoryTiles, type CategoryTile } from "./category-tiles";
 import { Delta, scoreTone } from "./ui";
 
-// One collapsible section per category: the score, what the category covers
-// and the finding count in the header; the findings inside. Sections with a
-// critical or high finding start open, the rest closed, so the page reads as
-// a scorecard first and a list second.
+// A row of score tiles, then one collapsible section per category: the score,
+// what the category covers and the finding count in the header; the findings
+// inside. Sections start closed; a tile opens its section and scrolls to it.
 export function CategorySections({
   scores,
   previousScores,
@@ -38,16 +38,26 @@ export function CategorySections({
 }) {
   const hasAi = findings.some((f) => f.category === "ai");
   const cats: CategoryKey[] = hasAi ? [...SCORED_CATEGORIES, "ai"] : [...SCORED_CATEGORIES];
+  const listFor = (cat: CategoryKey) => findings.filter((f) => f.category === cat && (showIgnored || !f.ignored) && (severity === "all" || f.severity === severity));
+  const tiles: CategoryTile[] = cats.map((cat) => ({
+    cat,
+    label: CATEGORY_LABELS[cat],
+    hint: CATEGORY_HINTS[cat],
+    score: cat === "ai" ? undefined : scores?.[cat],
+    before: previousScores ? previousScores[cat] : undefined,
+    count: listFor(cat).length,
+    note: cat === "ai" ? (aiSummary && aiSummary.answers > 0 ? `${aiSummary.mentioned}/${aiSummary.answers} mentioned` : "sampled") : undefined,
+  }));
   return (
     <div className="space-y-3">
+      <CategoryTiles tiles={tiles} />
       {cats.map((cat) => {
-        const list = findings.filter((f) => f.category === cat && (showIgnored || !f.ignored) && (severity === "all" || f.severity === severity));
-        const urgent = list.some((f) => f.severity === "critical" || f.severity === "high");
+        const list = listFor(cat);
         const score = cat === "ai" ? undefined : scores?.[cat];
         const tone = scoreTone(score);
         const count = list.length;
         return (
-          <details key={cat} open={openAll || urgent} className="group rounded-xl border border-line bg-surface">
+          <details key={cat} id={`area-${cat}`} open={openAll} className="group scroll-mt-4 rounded-xl border border-line bg-surface">
             <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 sm:gap-4 sm:px-5 [&::-webkit-details-marker]:hidden">
               <span aria-hidden className="w-3 shrink-0 text-ink-3 transition-transform group-open:rotate-90">
                 ▸

@@ -50,8 +50,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
 
   // Sharing and the agent log matter less than the result, so they sit at the
   // bottom once the audit is complete; the live monitor stays on top while it runs.
-  const shareCard = (
-      {run.status === "complete" && (
+  const shareCard = run.status === "complete" && (
         <Card>
           <CardHeader
             title="Share this report"
