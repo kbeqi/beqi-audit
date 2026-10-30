@@ -1,5 +1,5 @@
 import type { AiAnswer, CategoryKey, Finding, PageMetric, Run, Severity } from "@/db/schema";
-import { CATEGORY_LABELS, CATEGORY_ORDER, SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
+import { CATEGORY_HINTS, CATEGORY_LABELS, CATEGORY_ORDER, SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
 import { Markdown } from "./markdown";
 import { AiVisibilityCard, PerformanceCard } from "./insights";
 import { Delta, EffortPill, ScoreRing, SeverityPill, fmtDate, hostOf, scoreTone } from "./ui";
@@ -62,14 +62,15 @@ export function Report({
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {SCORED_CATEGORIES.map((cat) => {
           const score = run.scores?.[cat];
           const tone = scoreTone(score);
           return (
             <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
-              <div className="text-xs font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
-              <div className="mt-1 flex items-end justify-between">
+              <div className="text-xs font-medium text-ink">{CATEGORY_LABELS[cat]}</div>
+              <div className="text-[11px] text-ink-3">{CATEGORY_HINTS[cat]}</div>
+              <div className="mt-2 flex items-end justify-between">
                 <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical-text" : "text-ink"}`}>{score ?? "–"}</div>
                 {previous && <Delta now={score} before={previous.scores?.[cat]} />}
               </div>
@@ -144,8 +145,9 @@ export function Report({
               const list = groups.get(cat)!.sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || (a.pagePath ?? "").localeCompare(b.pagePath ?? ""));
               return (
                 <div key={cat}>
-                  <h3 className="bg-surface-2/60 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-ink-3">
+                  <h3 className="flex flex-wrap items-baseline gap-x-2 bg-surface-2/60 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-ink-3">
                     {CATEGORY_LABELS[cat]} ({list.length})
+                    <span className="font-normal normal-case tracking-normal text-ink-3">{CATEGORY_HINTS[cat]}</span>
                   </h3>
                   <ul className="divide-y divide-line">
                     {list.map((f) => {

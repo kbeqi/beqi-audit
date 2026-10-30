@@ -16,7 +16,7 @@ import { appUrl, getEnv } from "@/lib/env";
 import { SubmitButton } from "@/components/submit-button";
 import { AiVisibilityCard, PerformanceCard } from "@/components/insights";
 import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber, triggerLabel } from "@/components/ui";
-import { CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
+import { CATEGORY_HINTS, CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
@@ -143,13 +143,14 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <StatTile label="Cost" value={fmtCost(run.usage?.estimatedCostUsd)} hint={run.usage ? `${fmtNumber(run.usage.inputTokens + run.usage.cacheReadTokens)} in · ${fmtNumber(run.usage.outputTokens)} out · ${run.usage.toolCalls} tool calls` : undefined} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {SCORED_CATEGORIES.map((cat) => (
               <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
-                <div className="text-xs font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
-                <div className="mt-1 flex items-end justify-between">
+                <div className="text-xs font-medium text-ink">{CATEGORY_LABELS[cat]}</div>
+                <div className="text-[11px] text-ink-3">{CATEGORY_HINTS[cat]}</div>
+                <div className="mt-2 flex items-end justify-between">
                   <div className="text-2xl font-semibold leading-none text-ink">{run.scores?.[cat] ?? "–"}</div>
-                  <div className="text-xs text-ink-3 num">{run.summary!.findingsByCategory[cat] ?? 0}</div>
+                  <div className="text-xs text-ink-3 num">{run.summary!.findingsByCategory[cat] ?? 0} findings</div>
                 </div>
               </div>
             ))}

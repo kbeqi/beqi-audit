@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { CategoryKey, Finding, FixProposal, Severity } from "@/db/schema";
-import { CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
+import { CATEGORY_HINTS, CATEGORY_LABELS, CATEGORY_ORDER, SEVERITY_ORDER } from "@/audit/score";
 import { ignoreFinding, markFindingState } from "@/app/actions";
 import { SubmitButton } from "./submit-button";
 import { ConfidencePill, EffortPill, SeverityPill, btnGhost, btnSm } from "./ui";
@@ -40,8 +40,9 @@ export function FindingsList({ findings, siteId, baseUrl, back, proposals = [], 
         const list = groups.get(cat)!.sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || (a.pagePath ?? "").localeCompare(b.pagePath ?? ""));
         return (
           <section key={cat}>
-            <h3 className="bg-surface-2/60 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-ink-3">
+            <h3 className="flex flex-wrap items-baseline gap-x-2 bg-surface-2/60 px-5 py-2 text-xs font-semibold uppercase tracking-wide text-ink-3">
               {CATEGORY_LABELS[cat]} <span className="num font-medium">({list.length})</span>
+              <span className="font-normal normal-case tracking-normal">{CATEGORY_HINTS[cat]}</span>
             </h3>
             <ul className="divide-y divide-line">
               {list.map((f) => (

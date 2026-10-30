@@ -160,9 +160,10 @@ export const sites = sqliteTable(
 export type RunTrigger = "schedule" | "manual" | "publish";
 export type RunStatus = "queued" | "running" | "complete" | "failed";
 
-// "trust": identity, expertise and evidence signals. "ai": sampled AI-assistant
+// "conversion": readiness to convert (CTAs, forms, next steps), judged from the
+// pages, not from analytics. "trust": identity, expertise and evidence signals. "ai": sampled AI-assistant
 // visibility and accuracy; reported but not part of the overall score.
-export type CategoryKey = "seo" | "aeo" | "performance" | "trust" | "links" | "unused" | "naming" | "ai";
+export type CategoryKey = "seo" | "aeo" | "performance" | "conversion" | "trust" | "links" | "unused" | "naming" | "ai";
 
 export type Confidence = "high" | "medium" | "low";
 export type Effort = "quick" | "moderate" | "large";

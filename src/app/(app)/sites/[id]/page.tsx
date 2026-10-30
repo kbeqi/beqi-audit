@@ -14,7 +14,7 @@ import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
 import { PerformanceCard } from "@/components/insights";
 import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, scoreTone, timeAgo, triggerLabel } from "@/components/ui";
-import { CATEGORY_LABELS, SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
+import { CATEGORY_HINTS, CATEGORY_LABELS, SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
@@ -109,10 +109,11 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             return (
               <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-medium text-ink-3">{CATEGORY_LABELS[cat]}</div>
+                  <div className="text-xs font-medium text-ink">{CATEGORY_LABELS[cat]}</div>
                   <Delta now={score} before={previous?.scores?.[cat]} />
                 </div>
-                <div className="mt-1 flex items-end justify-between">
+                <div className="text-[11px] text-ink-3">{CATEGORY_HINTS[cat]}</div>
+                <div className="mt-2 flex items-end justify-between">
                   <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical-text" : "text-ink"}`}>{score ?? "–"}</div>
                   <div className="text-xs text-ink-3 num">{latest?.summary?.findingsByCategory[cat] ?? 0} findings</div>
                 </div>
