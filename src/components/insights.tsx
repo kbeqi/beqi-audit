@@ -23,10 +23,11 @@ function Vital({ label, value, tone, source }: { label: string; value: string; t
   );
 }
 
-export function PerformanceCard({ metrics, title = "Core Web Vitals", unavailable }: { metrics: PageMetric[]; title?: string; unavailable?: boolean }) {
+export function PerformanceCard({ metrics, title = "Core Web Vitals", unavailable, embedded = false }: { metrics: PageMetric[]; title?: string; unavailable?: boolean; embedded?: boolean }) {
   const rows = metrics.filter((m) => m.strategy === "mobile");
+  const Wrap = embedded ? "div" : Card;
   return (
-    <Card>
+    <Wrap>
       <CardHeader
         title={title}
         description="Measured by Google PageSpeed Insights on mobile. Real-visitor data (last 28 days) when the page has enough traffic, otherwise one lab run. Good: LCP ≤ 2.5 s, INP ≤ 200 ms, CLS ≤ 0.1."
@@ -56,11 +57,12 @@ export function PerformanceCard({ metrics, title = "Core Web Vitals", unavailabl
           })}
         </ul>
       )}
-    </Card>
+    </Wrap>
   );
 }
 
-export function AiVisibilityCard({ summary, answers, publicView = false }: { summary: AiVisibilitySummary | null | undefined; answers: AiAnswer[]; publicView?: boolean }) {
+export function AiVisibilityCard({ summary, answers, publicView = false, embedded = false }: { summary: AiVisibilitySummary | null | undefined; answers: AiAnswer[]; publicView?: boolean; embedded?: boolean }) {
+  const Wrap = embedded ? "div" : Card;
   const engines = summary ? Object.keys(summary.byEngine) : [];
   const byPrompt = new Map<string, AiAnswer[]>();
   for (const a of answers) {
@@ -69,7 +71,7 @@ export function AiVisibilityCard({ summary, answers, publicView = false }: { sum
   }
   const pct = (n: number) => (summary && summary.answers ? `${Math.round((n / summary.answers) * 100)}%` : "–");
   return (
-    <Card>
+    <Wrap>
       <CardHeader
         title="AI visibility (sampled)"
         description={summary?.note ?? "During each audit, AI assistants are asked the questions a prospective customer would ask, and the answers are checked for the brand."}
@@ -143,7 +145,7 @@ export function AiVisibilityCard({ summary, answers, publicView = false }: { sum
           )}
         </>
       )}
-    </Card>
+    </Wrap>
   );
 }
 

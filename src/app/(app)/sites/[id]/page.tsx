@@ -9,6 +9,7 @@ import { FREQUENCY_LABELS, type AuditFrequency, type Severity } from "@/db/schem
 import { siteDetail } from "@/lib/queries";
 import { deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
 import { CategorySections } from "@/components/category-sections";
+import { TopIssues } from "@/components/top-issues";
 import { SubmitButton } from "@/components/submit-button";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
@@ -118,9 +119,9 @@ export default async function SitePage({ params, searchParams }: { params: Promi
 
       <section aria-labelledby="areas" className="space-y-3">
         <CardHeader
-          title="Scores and findings by area"
+          title="Findings"
           count={findings.length}
-          description={latest ? `From the latest audit on ${fmtDate(latest.finishedAt)} · 100 means nothing was found in that area` : undefined}
+          description={latest ? `From the latest audit on ${fmtDate(latest.finishedAt)} · what to fix first, then every area with its score` : undefined}
           actions={
             latest && (
               <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by severity">
@@ -139,7 +140,22 @@ export default async function SitePage({ params, searchParams }: { params: Promi
           }
         />
         {latest ? (
-          <CategorySections scores={latest.scores} previousScores={previous?.scores} findings={findings} siteId={site.id} baseUrl={site.baseUrl} back={back} proposals={proposals} newFingerprints={newFps} severity={severity} aiSummary={latest.summary?.aiVisibility} />
+          <>
+            <TopIssues findings={findings} proposals={proposals} baseUrl={site.baseUrl} />
+            <CategorySections
+              scores={latest.scores}
+              previousScores={previous?.scores}
+              findings={findings}
+              siteId={site.id}
+              baseUrl={site.baseUrl}
+              back={back}
+              proposals={proposals}
+              newFingerprints={newFps}
+              severity={severity}
+              aiSummary={latest.summary?.aiVisibility}
+              extras={metrics.length > 0 || latest.summary?.perf ? { performance: <PerformanceCard metrics={metrics} unavailable={latest.summary?.perf?.unavailable} embedded /> } : undefined}
+            />
+          </>
         ) : (
           <Card>
             <EmptyState title="No completed audit yet" body="Run an audit to see scores and findings." />
@@ -178,8 +194,6 @@ export default async function SitePage({ params, searchParams }: { params: Promi
           </div>
         </Card>
       )}
-
-      {latest && (metrics.length > 0 || latest.summary?.perf) && <PerformanceCard metrics={metrics} unavailable={latest.summary?.perf?.unavailable} />}
 
       <Card id="fixes">
         <CardHeader title="Proposed fixes" count={openProposals.length} description="Nothing is written to Webflow until you approve it. Applied changes go live on the site's next publish." />

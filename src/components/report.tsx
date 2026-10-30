@@ -1,6 +1,7 @@
 import type { AiAnswer, Finding, PageMetric, Run, Severity } from "@/db/schema";
 import { SEVERITY_ORDER } from "@/audit/score";
 import { CategorySections } from "./category-sections";
+import { TopIssues } from "./top-issues";
 import { Markdown } from "./markdown";
 import { AiVisibilityCard, PerformanceCard } from "./insights";
 import { Delta, ScoreRing, SeverityPill, fmtDate, hostOf } from "./ui";
@@ -82,10 +83,12 @@ export function Report({
         </section>
       )}
 
-      <section aria-labelledby="areas">
+      <TopIssues findings={findings} baseUrl={baseUrl} readOnly />
+
+      <section aria-labelledby="areas-title">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-          <h2 id="areas" className="text-base font-semibold text-ink">
-            Scores and findings by area <span className="text-sm font-normal text-ink-3">({findings.length} findings)</span>
+          <h2 id="areas-title" className="text-base font-semibold text-ink">
+            Every area <span className="text-sm font-normal text-ink-3">({findings.length} findings)</span>
           </h2>
           <div className="flex flex-wrap gap-1.5 text-xs text-ink-3">
             {SEVERITY_ORDER.filter((s) => counts[s] > 0).map((s) => (
@@ -95,11 +98,21 @@ export function Report({
             ))}
           </div>
         </div>
-        <CategorySections scores={run.scores} previousScores={previous?.scores} findings={findings} siteId={run.siteId} baseUrl={baseUrl} back="" readOnly aiSummary={run.summary?.aiVisibility} />
+        <CategorySections
+          scores={run.scores}
+          previousScores={previous?.scores}
+          findings={findings}
+          siteId={run.siteId}
+          baseUrl={baseUrl}
+          back=""
+          readOnly
+          aiSummary={run.summary?.aiVisibility}
+          extras={{
+            ...(metrics.length > 0 || run.summary?.perf ? { performance: <PerformanceCard metrics={metrics} unavailable={run.summary?.perf?.unavailable} embedded /> } : {}),
+            ...(run.summary?.aiVisibility ? { ai: <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} publicView embedded /> } : {}),
+          }}
+        />
       </section>
-
-      {(metrics.length > 0 || run.summary?.perf) && <PerformanceCard metrics={metrics} unavailable={run.summary?.perf?.unavailable} />}
-      {run.summary?.aiVisibility && <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} publicView />}
 
       {fixesDone.length > 0 && (
         <section className="rounded-xl border border-line bg-surface p-6">

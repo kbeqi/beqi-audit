@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { runDetail } from "@/lib/queries";
 import { CategorySections } from "@/components/category-sections";
+import { TopIssues } from "@/components/top-issues";
 import { RunMonitor } from "@/components/run-progress";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
@@ -147,22 +148,9 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <StatTile label="Cost" value={fmtCost(run.usage?.estimatedCostUsd)} hint={run.usage ? `${fmtNumber(run.usage.inputTokens + run.usage.cacheReadTokens)} in · ${fmtNumber(run.usage.outputTokens)} out · ${run.usage.toolCalls} tool calls` : undefined} />
           </div>
 
-          <section aria-labelledby="areas" className="space-y-3">
-            <h2 id="areas" className="text-sm font-semibold text-ink">
-              Scores and findings by area <span className="ml-1.5 text-xs font-medium text-ink-3 num">{visible.length}</span>
-              <span className="ml-2 text-xs font-normal text-ink-3">100 means nothing was found in that area; open an area to see its findings.</span>
-            </h2>
-            <CategorySections scores={run.scores} findings={visible} siteId={site.id} baseUrl={site.baseUrl} back={`/runs/${run.id}`} proposals={proposals} newFingerprints={newFps} showIgnored aiSummary={run.summary.aiVisibility} />
-          </section>
-
-          <div className="grid gap-6 xl:grid-cols-2">
-            <PerformanceCard metrics={metrics} unavailable={run.summary.perf?.unavailable} />
-            <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} />
-          </div>
-
           {run.agentSummary && (
             <Card>
-              <CardHeader title="Claude's summary" />
+              <CardHeader title="In short" />
               <div className="grid gap-5 p-5 lg:grid-cols-[1fr_18rem]">
                 <Markdown text={run.agentSummary} />
                 {run.highlights && run.highlights.length > 0 && (
@@ -183,6 +171,24 @@ export default async function RunPage({ params, searchParams }: { params: Promis
               </div>
             </Card>
           )}
+
+          <TopIssues findings={visible} proposals={proposals} baseUrl={site.baseUrl} />
+
+          <CategorySections
+            scores={run.scores}
+            findings={visible}
+            siteId={site.id}
+            baseUrl={site.baseUrl}
+            back={`/runs/${run.id}`}
+            proposals={proposals}
+            newFingerprints={newFps}
+            showIgnored
+            aiSummary={run.summary.aiVisibility}
+            extras={{
+              performance: <PerformanceCard metrics={metrics} unavailable={run.summary.perf?.unavailable} embedded />,
+              ai: <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} embedded />,
+            }}
+          />
 
           {openProposals.length > 0 && (
             <Card>

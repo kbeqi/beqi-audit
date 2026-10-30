@@ -76,7 +76,7 @@ function FindingRow({ f, siteId, baseUrl, back, proposals, isNew, readOnly = fal
   const open = proposals.find((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying");
   const applied = proposals.find((p) => p.status === "applied" || p.status === "resolved");
   return (
-    <li className={`px-5 py-3 ${f.ignored ? "opacity-60" : ""}`}>
+    <li id={`finding-${f.id}`} className={`scroll-mt-20 px-5 py-3 ${f.ignored ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
           <SeverityPill severity={f.severity} />
