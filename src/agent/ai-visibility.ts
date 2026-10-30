@@ -122,7 +122,7 @@ export async function sampleAiVisibility(input: AiVisibilityInput): Promise<AiVi
           },
         ],
       });
-      addUsage(usage, parsed.usage);
+      addUsage(usage, parsed.usage, parsed.model);
       for (const j of parsed.parsed_output?.answers ?? []) {
         const a = answers[j.index];
         if (!a) continue;
@@ -282,7 +282,7 @@ async function askClaude(client: Anthropic, prompt: string, usage: RunUsage): Pr
       messages: [{ role: "user", content: prompt }],
     })
     .finalMessage();
-  addUsage(usage, res.usage);
+  addUsage(usage, res.usage, res.model);
   if (res.stop_reason === "refusal") throw new Error("the model declined");
   const text: string[] = [];
   const citations = new Set<string>();

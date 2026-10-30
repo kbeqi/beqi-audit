@@ -97,7 +97,7 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
     });
 
     const message = await stream.finalMessage();
-    addUsage(usage, message.usage);
+    addUsage(usage, message.usage, message.model);
     messages.push({ role: "assistant", content: message.content });
 
     if (message.stop_reason === "pause_turn") {
@@ -158,7 +158,7 @@ export async function structureAuditReport(env: AgentEnv, reportText: string, us
       { timeout: 20 * 60 * 1000 },
     )
     .finalMessage();
-  addUsage(usage, message.usage);
+  addUsage(usage, message.usage, message.model);
   if (message.stop_reason === "max_tokens") throw new Error("The audit report is too long to structure; lower the site's page budget and run again");
   const json = message.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")

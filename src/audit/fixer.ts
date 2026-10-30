@@ -7,6 +7,7 @@ import { newId, nowIso } from "@/lib/id";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { createEventSink } from "@/agent/events";
 import { runFixAgent } from "@/agent/fix";
+import { FIX_MODEL } from "@/agent/anthropic";
 import { putJson, runKey } from "./store";
 import type { RunEnv } from "./runner";
 
@@ -57,7 +58,7 @@ export async function applyProposal(env: RunEnv, proposalId: string): Promise<vo
       siteId: site.id,
       actor: proposal.appliedBy ?? proposal.approvedBy ?? "agent",
       action: applied ? "fix.applied" : `fix.${out.result.status}`,
-      detail: { proposalId: proposal.id, action: proposal.action, writes: out.writes, changes: out.result.changesMade, needsPublish: out.result.needsPublish, costUsd: out.usage.estimatedCostUsd },
+      detail: { proposalId: proposal.id, action: proposal.action, model: FIX_MODEL, writes: out.writes, changes: out.result.changesMade, needsPublish: out.result.needsPublish, costUsd: out.usage.estimatedCostUsd },
     });
   } catch (e) {
     const message = (e as Error).message ?? String(e);
