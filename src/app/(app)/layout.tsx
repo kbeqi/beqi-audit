@@ -6,6 +6,7 @@ import { signOut } from "@/app/auth-actions";
 import { currentActorOrNull, isUnprotected } from "@/lib/auth";
 import { pendingFixCount } from "@/lib/queries";
 import { btnGhost, btnSm } from "@/components/ui";
+import { ThemeSwitch } from "@/components/theme-switch";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </Link>
         <Nav pendingFixes={pending} showTeam />
         <div className="mt-auto hidden px-1 text-xs text-ink-3 lg:block">
+          <div className="mb-3">
+            <ThemeSwitch />
+          </div>
           <div className="truncate font-medium text-ink-2" title={actor.email}>
             {actor.via === "open" ? "No sign-in configured" : actor.name ?? actor.email}
           </div>

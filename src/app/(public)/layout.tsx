@@ -1,4 +1,5 @@
 import { Wordmark } from "@/components/brand";
+import { ThemeSwitch } from "@/components/theme-switch";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +11,12 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
       <header className="border-b border-line bg-surface">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 lg:px-6">
           <Wordmark />
-          <a href="https://beqi.co" className="text-xs text-ink-3 hover:text-ink" target="_blank" rel="noreferrer">
-            beqi.co
-          </a>
+          <div className="flex items-center gap-3">
+            <ThemeSwitch compact />
+            <a href="https://beqi.co" className="text-xs text-ink-3 hover:text-ink" target="_blank" rel="noreferrer">
+              beqi.co
+            </a>
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 lg:px-6">{children}</main>

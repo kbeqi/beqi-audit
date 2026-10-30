@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ThemeScript } from "@/components/theme-switch";
 
 export const metadata: Metadata = {
   title: { default: "Beqi Audit", template: "%s · Beqi Audit" },
@@ -12,7 +13,10 @@ export const dynamic = "force-dynamic";
 // (app)/layout.tsx; sign-in and shared reports use (public)/layout.tsx.
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
       <body className="min-h-full">{children}</body>
     </html>
   );

@@ -8,13 +8,13 @@ import { getDb, schema } from "@/db";
 import { FREQUENCY_LABELS, type AuditFrequency, type Severity } from "@/db/schema";
 import { siteDetail } from "@/lib/queries";
 import { deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
-import { FindingsList } from "@/components/findings";
+import { CategorySections } from "@/components/category-sections";
 import { SubmitButton } from "@/components/submit-button";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
 import { PerformanceCard } from "@/components/insights";
-import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, scoreTone, timeAgo, triggerLabel } from "@/components/ui";
-import { CATEGORY_HINTS, CATEGORY_LABELS, SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
+import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, timeAgo, triggerLabel } from "@/components/ui";
+import { SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
@@ -102,26 +102,50 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             )}
           </div>
         </Card>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {SCORED_CATEGORIES.map((cat) => {
-            const score = latest?.scores?.[cat];
-            const tone = scoreTone(score);
-            return (
-              <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-medium text-ink">{CATEGORY_LABELS[cat]}</div>
-                  <Delta now={score} before={previous?.scores?.[cat]} />
-                </div>
-                <div className="text-[11px] text-ink-3">{CATEGORY_HINTS[cat]}</div>
-                <div className="mt-2 flex items-end justify-between">
-                  <div className={`text-2xl font-semibold leading-none ${tone === "critical" ? "text-critical-text" : "text-ink"}`}>{score ?? "–"}</div>
-                  <div className="text-xs text-ink-3 num">{latest?.summary?.findingsByCategory[cat] ?? 0} findings</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <Card className="flex items-center px-6 py-5">
+          <div className="text-sm text-ink-2">
+            {latest ? (
+              <>
+                <span className="font-medium text-ink">{findings.length} open finding{findings.length === 1 ? "" : "s"}</span> across {SCORED_CATEGORIES.length} areas · {latest.summary?.newFindings ?? 0} new and {latest.summary?.resolvedFindings ?? 0} resolved since the previous audit.
+                <span className="block text-xs text-ink-3">Each area below shows its score; open one to see what was found.</span>
+              </>
+            ) : (
+              "Scores by area appear after the first audit."
+            )}
+          </div>
+        </Card>
       </div>
+
+      <section aria-labelledby="areas" className="space-y-3">
+        <CardHeader
+          title="Scores and findings by area"
+          count={findings.length}
+          description={latest ? `From the latest audit on ${fmtDate(latest.finishedAt)} · 100 means nothing was found in that area` : undefined}
+          actions={
+            latest && (
+              <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by severity">
+                {(["all", ...SEVERITY_ORDER] as const).map((s) => (
+                  <Link
+                    key={s}
+                    href={s === "all" ? back : `${back}?sev=${s}`}
+                    className={`rounded-md px-2 py-0.5 text-xs font-medium ${severity === s ? "bg-ink text-surface" : "text-ink-2 hover:bg-surface-2"}`}
+                    aria-current={severity === s ? "true" : undefined}
+                  >
+                    {s === "all" ? "All" : `${s} ${counts[s] ? counts[s] : ""}`.trim()}
+                  </Link>
+                ))}
+              </div>
+            )
+          }
+        />
+        {latest ? (
+          <CategorySections scores={latest.scores} previousScores={previous?.scores} findings={findings} siteId={site.id} baseUrl={site.baseUrl} back={back} proposals={proposals} newFingerprints={newFps} severity={severity} aiSummary={latest.summary?.aiVisibility} />
+        ) : (
+          <Card>
+            <EmptyState title="No completed audit yet" body="Run an audit to see scores and findings." />
+          </Card>
+        )}
+      </section>
 
       {latest?.agentSummary && (
         <Card>
@@ -180,34 +204,6 @@ export default async function SitePage({ params, searchParams }: { params: Promi
         )}
       </Card>
 
-      <Card>
-        <CardHeader
-          title="Open findings"
-          count={findings.length}
-          description={latest ? `From the latest audit · ${latest.summary?.newFindings ?? 0} new, ${latest.summary?.resolvedFindings ?? 0} resolved since the previous one` : undefined}
-          actions={
-            latest && (
-              <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by severity">
-                {(["all", ...SEVERITY_ORDER] as const).map((s) => (
-                  <Link
-                    key={s}
-                    href={s === "all" ? back : `${back}?sev=${s}`}
-                    className={`rounded-md px-2 py-0.5 text-xs font-medium ${severity === s ? "bg-ink text-surface" : "text-ink-2 hover:bg-surface-2"}`}
-                    aria-current={severity === s ? "true" : undefined}
-                  >
-                    {s === "all" ? "All" : `${s} ${counts[s] ? counts[s] : ""}`.trim()}
-                  </Link>
-                ))}
-              </div>
-            )
-          }
-        />
-        {latest ? (
-          <FindingsList findings={findings} siteId={site.id} baseUrl={site.baseUrl} back={back} proposals={proposals} newFingerprints={newFps} severity={severity} />
-        ) : (
-          <EmptyState title="No completed audit yet" body="Run an audit to see findings." />
-        )}
-      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>

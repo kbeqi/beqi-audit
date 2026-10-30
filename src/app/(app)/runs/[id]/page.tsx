@@ -6,7 +6,7 @@ import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { runDetail } from "@/lib/queries";
-import { FindingsList } from "@/components/findings";
+import { CategorySections } from "@/components/category-sections";
 import { RunMonitor } from "@/components/run-progress";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
@@ -16,7 +16,7 @@ import { appUrl, getEnv } from "@/lib/env";
 import { SubmitButton } from "@/components/submit-button";
 import { AiVisibilityCard, PerformanceCard } from "@/components/insights";
 import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber, triggerLabel } from "@/components/ui";
-import { CATEGORY_HINTS, CATEGORY_LABELS, SCORED_CATEGORIES } from "@/audit/score";
+
 
 export const dynamic = "force-dynamic";
 
@@ -143,18 +143,13 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <StatTile label="Cost" value={fmtCost(run.usage?.estimatedCostUsd)} hint={run.usage ? `${fmtNumber(run.usage.inputTokens + run.usage.cacheReadTokens)} in · ${fmtNumber(run.usage.outputTokens)} out · ${run.usage.toolCalls} tool calls` : undefined} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {SCORED_CATEGORIES.map((cat) => (
-              <div key={cat} className="rounded-xl border border-line bg-surface px-4 py-3">
-                <div className="text-xs font-medium text-ink">{CATEGORY_LABELS[cat]}</div>
-                <div className="text-[11px] text-ink-3">{CATEGORY_HINTS[cat]}</div>
-                <div className="mt-2 flex items-end justify-between">
-                  <div className="text-2xl font-semibold leading-none text-ink">{run.scores?.[cat] ?? "–"}</div>
-                  <div className="text-xs text-ink-3 num">{run.summary!.findingsByCategory[cat] ?? 0} findings</div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <section aria-labelledby="areas" className="space-y-3">
+            <h2 id="areas" className="text-sm font-semibold text-ink">
+              Scores and findings by area <span className="ml-1.5 text-xs font-medium text-ink-3 num">{visible.length}</span>
+              <span className="ml-2 text-xs font-normal text-ink-3">100 means nothing was found in that area; open an area to see its findings.</span>
+            </h2>
+            <CategorySections scores={run.scores} findings={visible} siteId={site.id} baseUrl={site.baseUrl} back={`/runs/${run.id}`} proposals={proposals} newFingerprints={newFps} showIgnored aiSummary={run.summary.aiVisibility} />
+          </section>
 
           <div className="grid gap-6 xl:grid-cols-2">
             <PerformanceCard metrics={metrics} unavailable={run.summary.perf?.unavailable} />
@@ -196,10 +191,6 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             </Card>
           )}
 
-          <Card>
-            <CardHeader title="Findings" count={visible.length} />
-            <FindingsList findings={visible} siteId={site.id} baseUrl={site.baseUrl} back={`/runs/${run.id}`} proposals={proposals} newFingerprints={newFps} showIgnored />
-          </Card>
         </>
       )}
 
