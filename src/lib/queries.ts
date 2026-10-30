@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, lt } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Client, Finding, FixProposal, Run, RunEvent, Site, WebflowConnection } from "@/db/schema";
 
@@ -244,7 +244,15 @@ export async function clientHeader(clientId: string) {
   const hasCompleted = siteIds.length
     ? (await chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: and(inArray(schema.runs.siteId, ids), eq(schema.runs.status, "complete")), columns: { id: true }, limit: 1 }))).length > 0
     : false;
-  return { client, siteCount: sites.length, connectedCount: sites.filter((s) => s.connectionId).length, running: live, pendingFixes: pending.length, hasCompleted };
+  // Active connections whose token is gone (expired, or marked so after a
+  // failed refresh): the person has to connect the workspace again.
+  const activeConnections = await db.query.webflowConnections.findMany({
+    where: and(eq(schema.webflowConnections.clientId, client.id), isNull(schema.webflowConnections.revokedAt)),
+    columns: { id: true, expiresAt: true, label: true },
+  });
+  const nowIso = new Date().toISOString();
+  const lostConnections = activeConnections.filter((c) => c.expiresAt && c.expiresAt <= nowIso).length;
+  return { client, siteCount: sites.length, connectedCount: sites.filter((s) => s.connectionId).length, running: live, pendingFixes: pending.length, hasCompleted, lostConnections };
 }
 
 export async function proposalDetail(proposalId: string) {

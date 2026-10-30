@@ -29,9 +29,14 @@ interface ProviderState {
   redirectUrl?: URL;
 }
 
-function clientMetadata(redirectUri: string): OAuthClientMetadata {
+// One registered OAuth client per connection. Webflow's MCP server keeps one
+// active grant per user and client, so when every workspace shared a single
+// registration, authorizing a second workspace silently invalidated the
+// first one's token ("Grant not found" on the next refresh). A distinct
+// client id per connection keeps each grant independent.
+function clientMetadata(redirectUri: string, label?: string): OAuthClientMetadata {
   return {
-    client_name: "Beqi Audit",
+    client_name: label ? `Beqi Audit (${label})` : "Beqi Audit",
     client_uri: "https://beqi.co",
     redirect_uris: [redirectUri],
     grant_types: ["authorization_code", "refresh_token"],
@@ -45,6 +50,7 @@ function makeProvider(opts: {
   redirectUri: string;
   state: ProviderState;
   stateValue: () => string;
+  label?: string;
   onClientInfo?: (info: OAuthClientInformationMixed) => Promise<void>;
 }): OAuthClientProvider {
   const { redirectUri, state } = opts;
@@ -53,7 +59,7 @@ function makeProvider(opts: {
       return redirectUri;
     },
     get clientMetadata() {
-      return clientMetadata(redirectUri);
+      return clientMetadata(redirectUri, opts.label);
     },
     state: () => opts.stateValue(),
     clientInformation: () => state.clientInfo,
@@ -78,25 +84,16 @@ function makeProvider(opts: {
   };
 }
 
-async function clientCacheKey(serverUrl: string, redirectUri: string): Promise<string> {
-  return `mcp-oauth/client/${(await sha256Hex(`${serverUrl}|${redirectUri}`)).slice(0, 32)}`;
-}
-
 export async function beginMcpAuthorization(
-  env: Pick<CloudflareEnv, "AUDIT_STORE" | "WEBFLOW_MCP_URL">,
+  env: Pick<CloudflareEnv, "WEBFLOW_MCP_URL">,
   opts: { clientId: string; redirectUri: string },
 ): Promise<{ authorizationUrl: string; pending: PendingAuth }> {
   const serverUrl = env.WEBFLOW_MCP_URL;
-  const key = await clientCacheKey(serverUrl, opts.redirectUri);
-  const cached = await env.AUDIT_STORE.get<OAuthClientInformationMixed>(key, "json");
-  const st: ProviderState = { clientInfo: cached ?? undefined };
+  // No cached registration on purpose: a fresh client per authorization.
+  const st: ProviderState = {};
   const stateValue = `${opts.clientId}.${crypto.randomUUID().replace(/-/g, "")}`;
-  const provider = makeProvider({
-    redirectUri: opts.redirectUri,
-    state: st,
-    stateValue: () => stateValue,
-    onClientInfo: (info) => env.AUDIT_STORE.put(key, JSON.stringify(info)),
-  });
+  const label = `${opts.clientId.slice(-6)}-${(await sha256Hex(stateValue)).slice(0, 6)}`;
+  const provider = makeProvider({ redirectUri: opts.redirectUri, state: st, stateValue: () => stateValue, label });
   const result = await auth(provider, { serverUrl });
   if (result !== "REDIRECT" || !st.redirectUrl || !st.verifier) {
     throw new Error("Webflow's MCP server did not start an authorization flow");

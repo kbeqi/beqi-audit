@@ -5,7 +5,7 @@ import { clientHeader } from "@/lib/queries";
 import { runClientNow } from "@/app/actions";
 import { ClientTabs } from "@/components/client-tabs";
 import { SubmitButton } from "@/components/submit-button";
-import { Crumbs, StatusPill, btnPrimary, btnSecondary } from "@/components/ui";
+import { Crumbs, Notice, StatusPill, btnPrimary, btnSecondary } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ export default async function ClientLayout({ params, children }: { params: Promi
   await requireSignedIn(`/clients/${id}`);
   const h = await clientHeader(id);
   if (!h) notFound();
-  const { client, siteCount, connectedCount, running, pendingFixes, hasCompleted } = h;
+  const { client, siteCount, connectedCount, running, pendingFixes, hasCompleted, lostConnections } = h;
   const logoUrl = client.logoKey ? `/api/clients/${client.id}/logo?v=${encodeURIComponent(client.logoUpdatedAt ?? "")}` : null;
   const allRunning = connectedCount > 0 && running.length >= connectedCount;
 
@@ -58,6 +58,15 @@ export default async function ClientLayout({ params, children }: { params: Promi
         </div>
       </div>
       <ClientTabs clientId={client.id} counts={{ audits: 0, pendingFixes, sites: siteCount, running: running.length > 0 }} />
+      {lostConnections > 0 && (
+        <Notice tone="serious">
+          <strong>Webflow connection lost.</strong> Audits and fixes for this client cannot run until the workspace is connected again:{" "}
+          <Link href={`/clients/${client.id}/settings`} className="font-medium underline">
+            open Settings and click Connect Webflow
+          </Link>
+          . Existing audits, findings and fixes are kept.
+        </Notice>
+      )}
       <div>{children}</div>
     </div>
   );

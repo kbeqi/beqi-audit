@@ -79,6 +79,9 @@ async function keepConnectionsAlive(env: CloudflareEnv, now: Date): Promise<numb
       const fresh = await ensureFreshConnection(env, c);
       if (fresh.expiresAt !== c.expiresAt) refreshed++;
     } catch (e) {
+      // Mark the token expired right away so the client pages say "reconnect"
+      // instead of waiting for the nominal expiry to pass.
+      await db.update(schema.webflowConnections).set({ expiresAt: now.toISOString() }).where(eq(schema.webflowConnections.id, c.id));
       await db.insert(schema.auditLog).values({
         id: newId(),
         actor: "system",
