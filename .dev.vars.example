@@ -13,3 +13,10 @@ WEBFLOW_MCP_URL=https://mcp.webflow.com/mcp
 # "open" signs you in as dev@local without email; "app" enforces sign-in like production.
 AUTH_MODE=open
 ADMIN_EMAILS=kreshnik@beqi.co
+
+# Optional. Google PageSpeed Insights API key (Core Web Vitals for key pages).
+# Works without it at low volume; a key raises the quota.
+PSI_API_KEY=
+# Optional. Adds Perplexity (Sonar) to the AI visibility sample; Claude with
+# web search is always used.
+PERPLEXITY_API_KEY=

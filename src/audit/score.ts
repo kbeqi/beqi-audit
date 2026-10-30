@@ -5,20 +5,69 @@ export const CATEGORY_LABELS: Record<CategoryKey, string> = {
   seo: "SEO",
   aeo: "AEO / GEO",
   performance: "Performance",
+  conversion: "Conversion readiness",
+  trust: "Trust & identity",
   links: "Links",
   unused: "Unused CSS & scripts",
   naming: "Naming",
+  ai: "AI visibility",
 };
 
-export const CATEGORY_ORDER: CategoryKey[] = ["seo", "aeo", "performance", "links", "unused", "naming"];
+// One line per category, shown under the label so a reader knows what each
+// score covers without a legend.
+export const CATEGORY_HINTS: Record<CategoryKey, string> = {
+  seo: "Titles, descriptions, headings, indexing",
+  aeo: "Does each page answer its question plainly",
+  performance: "Speed and Core Web Vitals",
+  conversion: "Calls to action, forms, next steps",
+  trust: "Who you are, contact, proof",
+  links: "Broken, misleading or dead links",
+  unused: "Scripts and styles nothing uses",
+  naming: "Class names a designer can work with",
+  ai: "Sampled AI answers, not scored",
+};
+
+// Plain-language names and hints for people outside the agency (the shared
+// report). Same areas, no jargon.
+export const CLIENT_LABELS: Record<CategoryKey, string> = {
+  seo: "Search (SEO)",
+  aeo: "AI answers",
+  performance: "Speed",
+  conversion: "Turning visitors into enquiries",
+  trust: "Trust",
+  links: "Links",
+  unused: "Unused code",
+  naming: "Tidiness",
+  ai: "What AI assistants say",
+};
+export const CLIENT_HINTS: Record<CategoryKey, string> = {
+  seo: "How well search engines can read and list your pages",
+  aeo: "Whether each page answers its question plainly",
+  performance: "How fast pages load on a phone",
+  conversion: "Calls to action, forms, next steps",
+  trust: "Who you are, how to reach you, proof",
+  links: "Broken, misleading or dead links",
+  unused: "Scripts and styles nothing uses",
+  naming: "Class names a designer can work with",
+  ai: "A sample of assistant answers about you, not scored",
+};
+
+// Every category, for grouping findings.
+export const CATEGORY_ORDER: CategoryKey[] = ["seo", "aeo", "performance", "conversion", "trust", "links", "unused", "naming", "ai"];
+// Categories that carry a score and feed the overall number. AI visibility is a
+// sample and is reported on its own.
+export const SCORED_CATEGORIES: CategoryKey[] = ["seo", "aeo", "performance", "conversion", "trust", "links", "unused", "naming"];
 
 const CATEGORY_WEIGHT: Record<CategoryKey, number> = {
-  seo: 25,
-  performance: 20,
-  links: 15,
-  aeo: 15,
-  unused: 12.5,
-  naming: 12.5,
+  seo: 20,
+  aeo: 16,
+  performance: 16,
+  conversion: 12,
+  trust: 10,
+  links: 12,
+  unused: 7,
+  naming: 7,
+  ai: 0,
 };
 
 const SEVERITY_PENALTY: Record<Severity, number> = {
@@ -51,7 +100,7 @@ export function scoreCategories(findings: FindingDraft[]): { scores: CategorySco
   }
   let weighted = 0;
   let totalWeight = 0;
-  for (const cat of CATEGORY_ORDER) {
+  for (const cat of SCORED_CATEGORIES) {
     weighted += (scores[cat] ?? 100) * CATEGORY_WEIGHT[cat];
     totalWeight += CATEGORY_WEIGHT[cat];
   }

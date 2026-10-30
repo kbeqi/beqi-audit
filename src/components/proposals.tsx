@@ -3,7 +3,7 @@ import type { FixProposal, Site } from "@/db/schema";
 import type { FixAction } from "@/agent/catalog";
 import { decideProposal } from "@/app/actions";
 import { SubmitButton } from "./submit-button";
-import { ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
+import { EffortPill, ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
 
 export const ACTION_LABELS: Record<FixAction, string> = {
   page_seo: "Page SEO settings",
@@ -61,7 +61,7 @@ export function ChangeDiff({ changes }: { changes: { field: string; from: string
           <dd className="min-w-0 space-y-1">
             {c.from != null && c.from !== "" && (
               <div className="flex gap-2">
-                <span aria-hidden className="shrink-0 text-critical">−</span>
+                <span aria-hidden className="shrink-0 text-critical-text">−</span>
                 <Value v={c.from} removed />
               </div>
             )}
@@ -100,9 +100,24 @@ export function DecisionButtons({ proposal, back, size = "md" }: { proposal: Fix
       </form>
       <form action={decideProposal}>
         <input type="hidden" name="proposalId" value={proposal.id} />
+        <input type="hidden" name="decision" value="resolved" />
+        <input type="hidden" name="back" value={back} />
+        <SubmitButton
+          className={`${btnSecondary} ${sm}`}
+          confirm="Mark this as already fixed on the site by a person? Nothing is written to Webflow; the next audit re-checks it and reopens it if the issue is still there."
+          pendingLabel="Saving…"
+          title="A person already made this change in Webflow"
+        >
+          Fixed manually
+        </SubmitButton>
+      </form>
+      <form action={decideProposal}>
+        <input type="hidden" name="proposalId" value={proposal.id} />
         <input type="hidden" name="decision" value="reject" />
         <input type="hidden" name="back" value={back} />
-        <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Rejecting…">Reject</SubmitButton>
+        <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Rejecting…" title="Don't make this change">
+          Reject
+        </SubmitButton>
       </form>
     </div>
   );
@@ -122,6 +137,7 @@ export function ProposalRow({ proposal, site, back, compact = false }: { proposa
             </Link>
             <ProposalStatusPill status={proposal.status} />
             <RiskPill risk={proposal.risk} />
+            <EffortPill effort={proposal.effort} />
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-ink-3">
             {site && (
@@ -149,7 +165,7 @@ export function ProposalRow({ proposal, site, back, compact = false }: { proposa
               View {changes.length === 1 ? "the change" : `${changes.length} changes`} →
             </Link>
           )}
-          {proposal.error && <p className="mt-1.5 text-xs text-critical">{proposal.error}</p>}
+          {proposal.error && <p className="mt-1.5 text-xs text-critical-text">{proposal.error}</p>}
         </div>
         <div className={`shrink-0 ${compact ? "basis-full" : ""}`}>
           <DecisionButtons proposal={proposal} back={back} size="sm" />

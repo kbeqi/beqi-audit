@@ -103,22 +103,32 @@ export function resultsEmail(opts: {
   proposals: number;
   appUrl: string;
   runId: string;
+  // "publish": the audit ran because the site was published.
+  trigger?: "schedule" | "manual" | "publish";
+  newCriticalHigh?: number;
+  aiVisibility?: { answers: number; mentioned: number; cited: number; inaccuracies: number } | null;
 }): EmailMessage {
   const link = `${opts.appUrl}/runs/${opts.runId}`;
   const delta = opts.score != null && opts.previousScore != null ? opts.score - opts.previousScore : null;
   const deltaText = delta == null ? "" : delta === 0 ? " (unchanged)" : ` (${delta > 0 ? "+" : ""}${delta} vs last audit)`;
-  const title = `${opts.siteName}: audit score ${opts.score ?? "–"}/100${deltaText}`;
+  const afterPublish = opts.trigger === "publish";
+  const title = `${opts.siteName}: ${afterPublish ? "post-publish check" : "audit"} score ${opts.score ?? "–"}/100${deltaText}`;
   const countsText = `${opts.counts.critical} critical · ${opts.counts.high} high · ${opts.counts.medium} medium · ${opts.counts.low} low`;
   const hl = opts.highlights.slice(0, 6);
-  const text = `Hi,\n\nThe audit of ${opts.siteName} (${opts.siteHost}) is done.\n\nScore: ${opts.score ?? "–"}/100${deltaText}\nFindings: ${countsText}\nProposed fixes awaiting review: ${opts.proposals}\n\n${hl.length ? "Highlights:\n" + hl.map((h) => `- ${h}`).join("\n") + "\n\n" : ""}${opts.summary ? opts.summary + "\n\n" : ""}Full report: ${link}\n\n— Beqi`;
+  const intro = afterPublish ? `${opts.siteName} (${opts.siteHost}) was published, so we checked it again.` : `The audit of ${opts.siteName} (${opts.siteHost}) is done.`;
+  const regression = afterPublish && opts.newCriticalHigh ? `${opts.newCriticalHigh} new critical or high finding(s) since the last audit; worth a look before the next change.` : afterPublish ? "Nothing new at critical or high severity since the last audit." : null;
+  const ai = opts.aiVisibility && opts.aiVisibility.answers > 0 ? `AI assistants (sample of ${opts.aiVisibility.answers} answers): brand mentioned in ${opts.aiVisibility.mentioned}, site cited in ${opts.aiVisibility.cited}, ${opts.aiVisibility.inaccuracies} inaccurate claim(s).` : null;
+  const text = `Hi,\n\n${intro}\n\nScore: ${opts.score ?? "–"}/100${deltaText}\nFindings: ${countsText}\nProposed fixes awaiting review: ${opts.proposals}\n${regression ? `${regression}\n` : ""}${ai ? `${ai}\n` : ""}\n${hl.length ? "Highlights:\n" + hl.map((h) => `- ${h}`).join("\n") + "\n\n" : ""}${opts.summary ? opts.summary + "\n\n" : ""}Full report: ${link}\n\n— Beqi`;
   const html = layout(
     title,
-    `<p style="line-height:1.5">The audit of <strong>${esc(opts.siteName)}</strong> (${esc(opts.siteHost)}) is done.</p>
+    `<p style="line-height:1.5">${esc(intro)}</p>
+     ${regression ? `<p style="line-height:1.5;margin:0 0 8px">${esc(regression)}</p>` : ""}
      <table style="border-collapse:collapse;margin:8px 0 16px"><tr>
        <td style="padding:8px 16px 8px 0"><div style="font-size:12px;color:#6b6b66">Score</div><div style="font-size:28px;font-weight:600">${opts.score ?? "–"}<span style="font-size:14px;color:#6b6b66">/100${esc(deltaText)}</span></div></td>
        <td style="padding:8px 16px"><div style="font-size:12px;color:#6b6b66">Findings</div><div style="font-size:14px">${esc(countsText)}</div></td>
        <td style="padding:8px 0 8px 16px"><div style="font-size:12px;color:#6b6b66">Fixes to review</div><div style="font-size:14px">${opts.proposals}</div></td>
      </tr></table>
+     ${ai ? `<p style="line-height:1.5;font-size:14px;margin:0 0 16px">${esc(ai)}</p>` : ""}
      ${hl.length ? `<div style="font-size:12px;color:#6b6b66;margin-bottom:6px">Highlights</div><ul style="margin:0 0 16px;padding-left:18px;line-height:1.5">${hl.map((h) => `<li>${esc(h)}</li>`).join("")}</ul>` : ""}
      <p><a href="${esc(link)}" style="display:inline-block;background:#2a78d6;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">See the full report</a></p>`,
     `Sent for ${esc(opts.clientName)}. Fixes are only applied after a Beqi team member approves them.`,

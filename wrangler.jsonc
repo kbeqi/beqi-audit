@@ -12,7 +12,7 @@
   "observability": { "enabled": true },
   "vars": {
     // Public base URL of the app; used to build the Webflow MCP OAuth redirect URI.
-    "APP_URL": "https://beqi-audit-app.kreshnik.workers.dev",
+    "APP_URL": "https://beqi-audit-app.beqi.workers.dev",
     // Webflow's hosted MCP server. Claude (via the Anthropic MCP connector) and the
     // app's own site import both talk to it with the per-workspace OAuth token.
     "WEBFLOW_MCP_URL": "https://mcp.webflow.com/mcp",
@@ -29,7 +29,7 @@
   },
   "triggers": {
     // Scheduler tick: starts audit runs for every site whose next_run_at is due.
-    "crons": ["0 * * * *"]
+    "crons": ["*/20 * * * *"]
   },
   "services": [
     // Self-reference service binding required by OpenNext (name must match "name" above).

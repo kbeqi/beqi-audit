@@ -6,6 +6,8 @@ import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 initOpenNextCloudflareForDev();
 
 const nextConfig: NextConfig = {
+  // Client logo uploads go through a server action.
+  experimental: { serverActions: { bodySizeLimit: "2mb" } },
   // Every page in this app reads live audit data; the Cache Components model
   // adds friction without benefit for an internal dashboard.
   cacheComponents: false,

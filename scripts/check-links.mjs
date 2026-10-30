@@ -18,7 +18,7 @@ const ENDPOINTS = [
 ];
 // Link labels that are navigation or status words, not entity names.
 const GENERIC = new Set(["open", "all fixes", "full run", "from this audit", "view the change", "back to portfolio", "open client", "add client", "add your first client", "connect webflow", "connect another workspace", "portfolio", "clients", "fixes", "audits", "beqi audit", "reconnect the workspace", "to review", "more changes"]);
-const GENERIC_RE = /^(view\b|\+?\s*\d+ more|fix (proposed|applied|approved|being applied)|running\b|queued\b|\d+ to review)/;
+const GENERIC_RE = /^(view\b|\+?\s*\d+ more|fix (proposed|applied|approved|being applied)|running\b|queued\b|\d+ to review|(overview|audits|fixes|sites|settings)\b|link$|shared link|full report|all audits|review$|go to settings|audit now|connect )/;
 
 const queue = ["/"];
 const seen = new Set(queue);

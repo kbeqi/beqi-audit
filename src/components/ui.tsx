@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ProposalRisk, ProposalStatus, RunStatus, Severity } from "@/db/schema";
+import type { Confidence, Effort, ProposalRisk, ProposalStatus, RunStatus, Severity } from "@/db/schema";
 
 // ---- tones ------------------------------------------------------------------
 
@@ -75,7 +75,7 @@ export function Delta({ now, before, suffix = "" }: { now: number | null | undef
   if (d === 0) return <span className="text-xs text-ink-3">±0{suffix}</span>;
   const up = d > 0;
   return (
-    <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${up ? "text-up" : "text-critical"}`} aria-label={`${up ? "up" : "down"} ${Math.abs(d)} vs previous`}>
+    <span className={`inline-flex items-center gap-0.5 text-xs font-medium ${up ? "text-up" : "text-critical-text"}`} aria-label={`${up ? "up" : "down"} ${Math.abs(d)} vs previous`}>
       <span aria-hidden>{up ? "▲" : "▼"}</span>
       {Math.abs(d)}
       {suffix}
@@ -115,18 +115,18 @@ export function StatusPill({ status }: { status: RunStatus | string }) {
   const tone: Tone = status === "complete" ? "good" : status === "failed" ? "critical" : status === "running" ? "accent" : "neutral";
   return (
     <Pill tone={tone}>
-      {status === "running" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent" />}
+      {status === "running" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent-bg" />}
       {status}
     </Pill>
   );
 }
 
 export function ProposalStatusPill({ status }: { status: ProposalStatus }) {
-  const tone: Tone = status === "applied" ? "good" : status === "failed" ? "critical" : status === "rejected" ? "neutral" : status === "applying" ? "accent" : status === "approved" ? "warn" : "neutral";
-  const label = status === "proposed" ? "needs review" : status;
+  const tone: Tone = status === "applied" || status === "resolved" ? "good" : status === "failed" ? "critical" : status === "rejected" ? "neutral" : status === "applying" ? "accent" : status === "approved" ? "warn" : "neutral";
+  const label = status === "proposed" ? "needs review" : status === "resolved" ? "fixed manually" : status;
   return (
     <Pill tone={tone}>
-      {status === "applying" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent" />}
+      {status === "applying" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent-bg" />}
       {label}
     </Pill>
   );
@@ -136,6 +136,23 @@ export function RiskPill({ risk }: { risk: ProposalRisk | null | undefined }) {
   if (!risk) return null;
   const tone: Tone = risk === "high" ? "serious" : risk === "medium" ? "warn" : "neutral";
   return <Pill tone={tone} title="Risk of applying this change automatically">{risk} risk</Pill>;
+}
+
+// How sure the audit is. Only low/medium are shown: high is the norm.
+export function ConfidencePill({ confidence }: { confidence: Confidence | null | undefined }) {
+  if (!confidence || confidence === "high") return null;
+  return (
+    <Pill tone="neutral" title={confidence === "medium" ? "Strongly indicated, not verified directly" : "Inferred from partial evidence; verify before acting"}>
+      {confidence === "medium" ? "likely" : "unverified"}
+    </Pill>
+  );
+}
+
+// Effort to fix. Quick wins get the accent so they stand out in a list.
+export function EffortPill({ effort }: { effort: Effort | null | undefined }) {
+  if (!effort) return null;
+  if (effort === "quick") return <Pill tone="accent" title="Minutes in Webflow, or an approved fix">quick win</Pill>;
+  return <Pill tone="neutral" title={effort === "moderate" ? "An hour or two of content or design work" : "A project"}>{effort === "moderate" ? "some work" : "project"}</Pill>;
 }
 
 export function CountPill({ n, tone, label }: { n: number; tone: Tone; label: string }) {
@@ -235,10 +252,10 @@ export function KeyValue({ items }: { items: { k: string; v: React.ReactNode }[]
 // ---- controls ---------------------------------------------------------------
 
 export const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
-export const btnPrimary = `${btn} bg-accent text-accent-ink hover:brightness-110`;
+export const btnPrimary = `${btn} bg-accent-bg text-accent-ink hover:brightness-110`;
 export const btnSecondary = `${btn} border border-line-2 bg-surface text-ink hover:bg-surface-2`;
 export const btnGhost = `${btn} text-ink-2 hover:bg-surface-2 hover:text-ink`;
-export const btnDanger = `${btn} border border-line-2 bg-surface text-critical hover:bg-surface-2`;
+export const btnDanger = `${btn} border border-line-2 bg-surface text-critical-text hover:bg-surface-2`;
 export const btnSm = "!px-2 !py-1 !text-xs";
 export const inputCls = "w-full rounded-lg border border-line-2 bg-surface px-2.5 py-1.5 text-sm text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25";
 export const labelCls = "mb-1 block text-xs font-medium text-ink-2";
@@ -286,6 +303,10 @@ export function fmtNumber(n: number | null | undefined): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
   return n.toLocaleString("en-US");
+}
+
+export function triggerLabel(trigger: string): string {
+  return trigger === "publish" ? "after publish" : trigger === "schedule" ? "scheduled" : trigger === "manual" ? "manual" : trigger;
 }
 
 export function hostOf(url: string): string {

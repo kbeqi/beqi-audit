@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Client, Finding, FixProposal, Run, RunEvent, Site, WebflowConnection } from "@/db/schema";
 
@@ -22,7 +22,7 @@ export interface ClientCard {
 }
 
 const OPEN_PROPOSAL_STATUSES = ["proposed", "approved", "applying"] as const;
-const SUPPRESSED = new Set(["ignored", "false_positive"]);
+const SUPPRESSED = new Set(["ignored", "false_positive", "fixed"]);
 
 // Small helper for D1's bound-parameter cap.
 async function chunked<T, R>(items: T[], size: number, fn: (chunk: T[]) => Promise<R[]>): Promise<R[]> {
@@ -56,7 +56,7 @@ export async function siteCards(sites: Site[]): Promise<SiteCard[]> {
     ? await chunked(latestIds, 60, (ids) => db.query.findings.findMany({ where: and(inArray(schema.findings.runId, ids), eq(schema.findings.ignored, false)) }))
     : [];
   const states = findings.length
-    ? await chunked(siteIds, 60, (ids) => db.query.findingStates.findMany({ where: and(inArray(schema.findingStates.siteId, ids), inArray(schema.findingStates.status, ["ignored", "false_positive"])) }))
+    ? await chunked(siteIds, 60, (ids) => db.query.findingStates.findMany({ where: and(inArray(schema.findingStates.siteId, ids), inArray(schema.findingStates.status, ["ignored", "false_positive", "fixed"])) }))
     : [];
   const suppressed = new Set(states.map((s) => `${s.siteId}|${s.fingerprint}`));
 
@@ -114,7 +114,7 @@ export async function openFindingsForRun(siteId: string, runId: string): Promise
   const rows = await db.query.findings.findMany({ where: and(eq(schema.findings.runId, runId), eq(schema.findings.ignored, false)) });
   if (rows.length === 0) return [];
   const states = await db.query.findingStates.findMany({
-    where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.status, ["ignored", "false_positive"])),
+    where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.status, ["ignored", "false_positive", "fixed"])),
     columns: { fingerprint: true },
   });
   const suppressed = new Set(states.map((s) => s.fingerprint));
@@ -135,29 +135,71 @@ export async function siteDetail(siteId: string) {
   ]);
   const latest = runs.find((r) => r.status === "complete") ?? null;
   const previous = runs.filter((r) => r.status === "complete")[1] ?? null;
-  const findings = latest ? await openFindingsForRun(site.id, latest.id) : [];
+  const [findings, metrics] = latest ? await Promise.all([openFindingsForRun(site.id, latest.id), db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, latest.id) })]) : [[], []];
   const states = findings.length ? await db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, site.id) }) : [];
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
-  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity };
+  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity, metrics };
 }
 
 export async function runDetail(runId: string) {
   const db = await getDb();
   const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId) });
   if (!run) return null;
-  const [site, findings, events] = await Promise.all([
+  const [site, findings, events, metrics, aiAnswers] = await Promise.all([
     db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId) }),
     db.query.findings.findMany({ where: eq(schema.findings.runId, run.id) }),
     db.query.runEvents.findMany({ where: eq(schema.runEvents.streamId, run.id), orderBy: asc(schema.runEvents.seq), limit: 500 }),
+    db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, run.id) }),
+    db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, run.id), orderBy: [asc(schema.aiAnswers.prompt), asc(schema.aiAnswers.engine), asc(schema.aiAnswers.iteration)] }),
   ]);
   const client = site ? await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId) }) : null;
   const states = findings.length ? await db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, run.siteId) }) : [];
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
   const findingIds = findings.map((f) => f.id);
   const proposals = findingIds.length ? await chunked(findingIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.findingId, ids) })) : [];
-  return { run, site: site!, client, findings, stateByFp, proposals, events };
+  // How long this site's last audits took, for the live progress estimate.
+  const recent = await db.query.runs.findMany({
+    where: and(eq(schema.runs.siteId, run.siteId), eq(schema.runs.status, "complete")),
+    orderBy: desc(schema.runs.createdAt),
+    columns: { id: true, startedAt: true, finishedAt: true },
+    limit: 4,
+  });
+  const recentDurations = recent
+    .filter((r) => r.id !== run.id && r.startedAt && r.finishedAt)
+    .map((r) => new Date(r.finishedAt!).getTime() - new Date(r.startedAt!).getTime())
+    .filter((ms) => ms > 0)
+    .slice(0, 3);
+  return { run, site: site!, client, findings, stateByFp, proposals, events, metrics, aiAnswers, recentDurations };
 }
 
+// Everything the public report shows, by share token. No internal ids leak:
+// findings are returned without their proposals or actions.
+export async function sharedReport(token: string) {
+  if (!/^[a-z0-9]{18}$/.test(token)) return null;
+  const db = await getDb();
+  const run = await db.query.runs.findFirst({ where: and(eq(schema.runs.shareToken, token), eq(schema.runs.status, "complete")) });
+  if (!run) return null;
+  const [site, findings, metrics, aiAnswers, previous] = await Promise.all([
+    db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId) }),
+    openFindingsForRun(run.siteId, run.id),
+    db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, run.id) }),
+    db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, run.id), orderBy: [asc(schema.aiAnswers.prompt), asc(schema.aiAnswers.engine), asc(schema.aiAnswers.iteration)] }),
+    db.query.runs.findFirst({
+      where: and(eq(schema.runs.siteId, run.siteId), eq(schema.runs.status, "complete"), lt(schema.runs.createdAt, run.createdAt)),
+      orderBy: desc(schema.runs.createdAt),
+      columns: { scoreOverall: true, scores: true, finishedAt: true },
+    }),
+  ]);
+  if (!site) return null;
+  const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId), columns: { name: true } });
+  const done = await db.query.fixProposals.findMany({
+    where: and(eq(schema.fixProposals.siteId, site.id), inArray(schema.fixProposals.status, ["applied", "resolved"])),
+    columns: { title: true, status: true, appliedAt: true },
+  });
+  return { run, site, client, findings, previous: previous ?? null, fixesDone: done.filter((d) => d.appliedAt && d.appliedAt >= run.createdAt), metrics, aiAnswers };
+}
+
+// The client hub: everything the client's tabs show, in one batched fetch.
 export async function clientDetail(clientId: string) {
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
@@ -166,7 +208,51 @@ export async function clientDetail(clientId: string) {
     db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id), orderBy: schema.sites.name }),
     db.query.webflowConnections.findMany({ where: eq(schema.webflowConnections.clientId, client.id), orderBy: desc(schema.webflowConnections.createdAt) }),
   ]);
-  return { client, sites: await siteCards(sites), connections };
+  const cards = await siteCards(sites);
+  const siteIds = sites.map((s) => s.id);
+  const [runs, proposals, activity] = siteIds.length
+    ? await Promise.all([
+        chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: inArray(schema.runs.siteId, ids), orderBy: desc(schema.runs.createdAt), limit: 60 })),
+        chunked(siteIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.siteId, ids), orderBy: desc(schema.fixProposals.createdAt), limit: 150 })),
+        chunked(siteIds, 60, (ids) => db.query.auditLog.findMany({ where: inArray(schema.auditLog.siteId, ids), orderBy: desc(schema.auditLog.createdAt), limit: 15 })),
+      ])
+    : [[], [], []];
+  runs.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  proposals.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  activity.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const completed = runs.filter((r) => r.status === "complete");
+  const latest = completed[0] ?? null;
+  const previousOfLatest = latest ? (completed.find((r) => r.siteId === latest.siteId && r.id !== latest.id) ?? null) : null;
+  const latestFindings = latest ? await openFindingsForRun(latest.siteId, latest.id) : [];
+  const pendingFixes = proposals.filter((p) => OPEN_PROPOSAL_STATUSES.includes(p.status as (typeof OPEN_PROPOSAL_STATUSES)[number]));
+  return { client, sites: cards, connections, runs, latest, previousOfLatest, latestFindings, proposals, pendingFixes, activity: activity.slice(0, 15) };
+}
+
+// Just what the client header and tabs need.
+export async function clientHeader(clientId: string) {
+  const db = await getDb();
+  const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
+  if (!client) return null;
+  const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id), columns: { id: true, connectionId: true } });
+  const siteIds = sites.map((s) => s.id);
+  const [live, pending] = siteIds.length
+    ? await Promise.all([
+        chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: and(inArray(schema.runs.siteId, ids), inArray(schema.runs.status, ["queued", "running"])), columns: { id: true, siteId: true } })),
+        chunked(siteIds, 60, (ids) => db.query.fixProposals.findMany({ where: and(inArray(schema.fixProposals.siteId, ids), inArray(schema.fixProposals.status, [...OPEN_PROPOSAL_STATUSES])), columns: { id: true } })),
+      ])
+    : [[], []];
+  const hasCompleted = siteIds.length
+    ? (await chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: and(inArray(schema.runs.siteId, ids), eq(schema.runs.status, "complete")), columns: { id: true }, limit: 1 }))).length > 0
+    : false;
+  // Active connections whose token is gone (expired, or marked so after a
+  // failed refresh): the person has to connect the workspace again.
+  const activeConnections = await db.query.webflowConnections.findMany({
+    where: and(eq(schema.webflowConnections.clientId, client.id), isNull(schema.webflowConnections.revokedAt)),
+    columns: { id: true, expiresAt: true, label: true },
+  });
+  const nowIso = new Date().toISOString();
+  const lostConnections = activeConnections.filter((c) => c.expiresAt && c.expiresAt <= nowIso).length;
+  return { client, siteCount: sites.length, connectedCount: sites.filter((s) => s.connectionId).length, running: live, pendingFixes: pending.length, hasCompleted, lostConnections };
 }
 
 export async function proposalDetail(proposalId: string) {
@@ -178,7 +264,8 @@ export async function proposalDetail(proposalId: string) {
     proposal.findingId ? db.query.findings.findFirst({ where: eq(schema.findings.id, proposal.findingId) }) : Promise.resolve(undefined),
     db.query.runEvents.findMany({ where: eq(schema.runEvents.streamId, proposal.id), orderBy: asc(schema.runEvents.seq), limit: 300 }),
   ]);
-  return { proposal, site: site!, finding: finding ?? null, events };
+  const client = site ? await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId), columns: { id: true, name: true } }) : null;
+  return { proposal, site: site!, client: client ?? null, finding: finding ?? null, events };
 }
 
 // Events after a sequence number, for live polling.

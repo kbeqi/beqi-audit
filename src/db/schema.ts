@@ -57,6 +57,9 @@ export const clients = sqliteTable("clients", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   notes: text("notes"),
+  // Logo stored in AUDIT_STORE under this key (served by /api/clients/<id>/logo).
+  logoKey: text("logo_key"),
+  logoUpdatedAt: text("logo_updated_at"),
   // Where audit emails for this client go (one address, or several separated
   // by commas). Empty means no emails.
   notifyEmail: text("notify_email"),
@@ -102,7 +105,16 @@ export const webflowConnections = sqliteTable(
   (t) => [index("webflow_connections_client_idx").on(t.clientId)],
 );
 
-export type AuditFrequency = "daily" | "weekly" | "monthly" | "off";
+export type AuditFrequency = "daily" | "every3days" | "weekly" | "biweekly" | "monthly" | "off";
+
+export const FREQUENCY_LABELS: Record<AuditFrequency, string> = {
+  daily: "Daily",
+  every3days: "Every 3 days",
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+  monthly: "Monthly",
+  off: "Off (manual only)",
+};
 
 export const sites = sqliteTable(
   "sites",
@@ -130,6 +142,12 @@ export const sites = sqliteTable(
     keyPages: text("key_pages", { mode: "json" }).$type<string[]>().notNull().default(sql`'["/"]'`),
     maxPages: integer("max_pages").notNull().default(200),
     isEnterprise: integer("is_enterprise", { mode: "boolean" }).notNull().default(false),
+    // Release assurance: a Webflow site_publish webhook starts an audit.
+    auditOnPublish: integer("audit_on_publish", { mode: "boolean" }).notNull().default(true),
+    webhookId: text("webhook_id"),
+    webhookSecret: text("webhook_secret"),
+    // Prompts for the AI-visibility sample; null = use the audit's suggestions.
+    aiPrompts: text("ai_prompts", { mode: "json" }).$type<string[]>(),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [
@@ -142,13 +160,13 @@ export const sites = sqliteTable(
 export type RunTrigger = "schedule" | "manual" | "publish";
 export type RunStatus = "queued" | "running" | "complete" | "failed";
 
-export type CategoryKey =
-  | "seo"
-  | "aeo"
-  | "performance"
-  | "links"
-  | "unused"
-  | "naming";
+// "conversion": readiness to convert (CTAs, forms, next steps), judged from the
+// pages, not from analytics. "trust": identity, expertise and evidence signals. "ai": sampled AI-assistant
+// visibility and accuracy; reported but not part of the overall score.
+export type CategoryKey = "seo" | "aeo" | "performance" | "conversion" | "trust" | "links" | "unused" | "naming" | "ai";
+
+export type Confidence = "high" | "medium" | "low";
+export type Effort = "quick" | "moderate" | "large";
 
 export type CategoryScores = Partial<Record<CategoryKey, number>>;
 
@@ -160,6 +178,23 @@ export interface RunSummary {
   newFindings: number;
   resolvedFindings: number;
   proposals: number;
+  // Deterministic PageSpeed results for the key pages (mobile).
+  perf?: { pages: number; passing: number; unavailable: boolean };
+  // Sampled AI-assistant visibility; a sample, never market share.
+  aiVisibility?: AiVisibilitySummary;
+  // What changed vs the previous completed run (for publish-triggered runs).
+  regressions?: { scoreDelta: number | null; newCriticalHigh: number };
+}
+
+export interface AiVisibilitySummary {
+  prompts: number;
+  answers: number;
+  mentioned: number;
+  cited: number;
+  recommended: number;
+  inaccuracies: number;
+  byEngine: Record<string, { answers: number; mentioned: number; cited: number; recommended: number }>;
+  note: string;
 }
 
 // Token usage and cost of the agent calls behind a run.
@@ -196,6 +231,10 @@ export const runs = sqliteTable(
     // Claude's own narrative of the audit (markdown) and its top highlights.
     agentSummary: text("agent_summary"),
     highlights: text("highlights", { mode: "json" }).$type<string[]>(),
+    // Public read-only report link (/share/<token>); null when not shared.
+    shareToken: text("share_token").unique(),
+    sharedAt: text("shared_at"),
+    sharedBy: text("shared_by"),
     error: text("error"),
     createdAt: text("created_at").notNull().default(now),
   },
@@ -245,6 +284,9 @@ export const findings = sqliteTable(
     data: text("data", { mode: "json" }).$type<Record<string, unknown>>(),
     // Set when an ignore rule suppressed this finding in this run.
     ignored: integer("ignored", { mode: "boolean" }).notNull().default(false),
+    // How sure the audit is, and roughly how much work the fix is.
+    confidence: text("confidence").$type<Confidence>(),
+    effort: text("effort").$type<Effort>(),
   },
   (t) => [
     index("findings_run_idx").on(t.runId),
@@ -322,7 +364,8 @@ export const snapshots = sqliteTable(
   (t) => [index("snapshots_site_kind_idx").on(t.siteId, t.kind, t.createdAt)],
 );
 
-export type ProposalStatus = "proposed" | "approved" | "applying" | "applied" | "rejected" | "reverted" | "failed";
+// "resolved": a person fixed it on the site themselves; the next audit confirms.
+export type ProposalStatus = "proposed" | "approved" | "applying" | "applied" | "resolved" | "rejected" | "reverted" | "failed";
 export type ProposalRisk = "low" | "medium" | "high";
 
 export interface ProposalChange {
@@ -341,7 +384,7 @@ export interface ProposalTarget {
 
 // What the fix agent reported after applying a proposal.
 export interface ProposalResult {
-  status: "applied" | "skipped" | "failed";
+  status: "applied" | "skipped" | "failed" | "manual";
   summary: string;
   changesMade: ProposalChange[];
   verification: string;
@@ -367,6 +410,7 @@ export const fixProposals = sqliteTable(
     proposal: text("proposal", { mode: "json" }).$type<{ changes: ProposalChange[] }>().notNull(),
     previous: text("previous", { mode: "json" }).$type<Record<string, unknown>>(),
     rationale: text("rationale"),
+    effort: text("effort").$type<Effort>(),
     approvedBy: text("approved_by"),
     appliedBy: text("applied_by"),
     appliedAt: text("applied_at"),
@@ -375,6 +419,33 @@ export const fixProposals = sqliteTable(
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("fix_proposals_site_status_idx").on(t.siteId, t.status)],
+);
+
+export type AiEngine = "perplexity" | "claude";
+
+// One AI-assistant answer from the visibility sample.
+export const aiAnswers = sqliteTable(
+  "ai_answers",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    prompt: text("prompt").notNull(),
+    engine: text("engine").$type<AiEngine>().notNull(),
+    iteration: integer("iteration").notNull(),
+    mentioned: integer("mentioned", { mode: "boolean" }).notNull().default(false),
+    cited: integer("cited", { mode: "boolean" }).notNull().default(false),
+    recommended: integer("recommended", { mode: "boolean" }).notNull().default(false),
+    answer: text("answer").notNull(),
+    citations: text("citations", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+    issues: text("issues", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("ai_answers_run_idx").on(t.runId)],
 );
 
 export const ignoreRules = sqliteTable(
@@ -417,5 +488,6 @@ export type WebflowConnection = typeof webflowConnections.$inferSelect;
 export type PageMetric = typeof pageMetrics.$inferSelect;
 export type FixProposal = typeof fixProposals.$inferSelect;
 export type RunEvent = typeof runEvents.$inferSelect;
+export type AiAnswer = typeof aiAnswers.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type IgnoreRule = typeof ignoreRules.$inferSelect;

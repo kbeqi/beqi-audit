@@ -4,7 +4,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { Finding, FixProposal, RunUsage, Site, WebflowConnection } from "@/db/schema";
-import { addUsage, BETAS, emptyUsage, getAnthropic, MODEL } from "./anthropic";
+import { addUsage, AUDIT_MODEL, BETAS, emptyUsage, FIX_MODEL, getAnthropic } from "./anthropic";
 import type { EventSink } from "./events";
 import { AGENT_HARNESS, FIX_SYSTEM_PROMPT, fixTaskPrompt } from "./prompts";
 import { FixResultSchema, type FixResult } from "./schemas";
@@ -34,16 +34,16 @@ export async function runFixAgent(input: FixAgentInput): Promise<FixAgentOutput>
   const client = getAnthropic(env);
   const started = Date.now();
   const usage = emptyUsage();
-  const agentId = `${MODEL}|${AGENT_HARNESS}|fix-${proposal.id.slice(-6)}`;
+  const agentId = `${FIX_MODEL}|${AGENT_HARNESS}|fix-${proposal.id.slice(-6)}`;
   const writes: string[] = [];
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: fixTaskPrompt({ site, finding, proposal, agentId }) }];
   let finalText = "";
 
-  await emit("status", `Applying: ${proposal.title ?? proposal.action}`);
+  await emit("status", `Applying with ${FIX_MODEL}: ${proposal.title ?? proposal.action}`, { model: FIX_MODEL });
 
   for (let turn = 0; turn <= MAX_CONTINUATIONS; turn++) {
     const stream = client.beta.messages.stream({
-      model: MODEL,
+      model: FIX_MODEL,
       max_tokens: 32000,
       betas: BETAS,
       fallbacks: "default",
@@ -73,7 +73,7 @@ export async function runFixAgent(input: FixAgentInput): Promise<FixAgentOutput>
     });
 
     const message = await stream.finalMessage();
-    addUsage(usage, message.usage);
+    addUsage(usage, message.usage, message.model);
     messages.push({ role: "assistant", content: message.content });
     if (message.stop_reason === "pause_turn") continue;
     if (message.stop_reason === "refusal") throw new Error("The model declined to apply this fix");
@@ -86,14 +86,15 @@ export async function runFixAgent(input: FixAgentInput): Promise<FixAgentOutput>
   }
   if (!finalText.trim()) throw new Error("The fix agent produced no result");
 
+  // Structuring the short result needs no judgement; the audit model is cheaper.
   const parsed = await client.messages.parse({
-    model: MODEL,
+    model: AUDIT_MODEL,
     max_tokens: 8000,
     system: "Convert the agent's fix report to the schema. Copy values faithfully.",
     output_config: { format: zodOutputFormat(FixResultSchema), effort: "low" },
     messages: [{ role: "user", content: finalText }],
   });
-  addUsage(usage, parsed.usage);
+  addUsage(usage, parsed.usage, parsed.model);
   if (!parsed.parsed_output) throw new Error("Could not structure the fix result");
   usage.durationMs = Date.now() - started;
   const result = parsed.parsed_output;
