@@ -24,6 +24,7 @@ export const AUDIT_TOOLS = [
   "data_sitemap_tool",
   "data_element_tool",
   "data_element_settings_tool",
+  "data_interactions_tool",
   "data_forms_tool",
   "data_style_tool",
   "data_agent_instructions_tool",

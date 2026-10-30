@@ -98,6 +98,11 @@ export const CHECK_IDS = [
   "links.redirect-chain",
   "links.insecure-http",
   "links.staging-domain",
+  "links.empty-href",
+  "links.label-mismatch",
+  "links.navigates-and-opens-popup",
+  "links.popup-without-target",
+  "links.anchor-missing",
   // Unused
   "unused.registered-script",
   "unused.duplicate-tracker",
@@ -198,6 +203,11 @@ export const CHECKS: Record<CheckId, CheckDef> = {
   "links.redirect-chain": { category: "links", title: "Redirect chain", what: "A URL redirects two or more times before resolving.", severity: "low", fix: "manual" },
   "links.insecure-http": { category: "links", title: "Insecure http:// link or asset", what: "A link or asset on a reviewed page uses http:// to a host that supports https.", severity: "medium", fix: "manual" },
   "links.staging-domain": { category: "links", title: "Link to the webflow.io staging domain", what: "A page on the custom domain links to *.webflow.io.", severity: "high", fix: "manual" },
+  "links.empty-href": { category: "links", title: "Link goes nowhere", what: "An <a> or Webflow link block whose href is empty, '#' or javascript:, and which is not a modal, tab, dropdown or accordion trigger (no Webflow interaction, no data-w-tab / dropdown / nav role). One finding per page (pagePath); subject = the link text; list each href and text in evidence.", severity: "medium", fix: "manual" },
+  "links.label-mismatch": { category: "links", title: "Link text names a different page", what: "A link or button whose visible text (or aria-label) names one page or action while its href goes elsewhere: 'Pricing' opening the blog, 'Contact' opening the homepage, 'Download' pointing at a page with nothing to download. Compare the label with the destination page's title from the Webflow page list or the fetched <title>. One finding per link (subject = href); quote text and destination in evidence.", severity: "medium", fix: "manual" },
+  "links.navigates-and-opens-popup": { category: "links", title: "Link both navigates and opens a popup", what: "An element with a real href (not '#') that is also the trigger of a Webflow interaction, modal or lightbox (data_interactions_tool / element settings), so one click navigates away and opens an overlay at once. One finding per element; subject = element id or href; name the interaction in evidence.", severity: "high", fix: "manual" },
+  "links.popup-without-target": { category: "links", title: "Popup or modal with no working action", what: "A modal, lightbox or popup trigger whose target is missing: the overlay element does not exist, is empty, or its primary button / link / form inside has an empty href or no action. One finding per trigger; subject = element id; describe what the visitor sees.", severity: "medium", fix: "manual" },
+  "links.anchor-missing": { category: "links", title: "In-page anchor target does not exist", what: "A link to #section (on the same page or another page) whose id is not present in that page's rendered HTML. One finding per link (subject = full href); list the referring page in evidence.", severity: "low", fix: "manual" },
 
   "unused.registered-script": { category: "unused", title: "Registered script not applied anywhere", what: "A registered script (data_scripts_tool) is applied to neither the site nor any page.", severity: "low", fix: "remove_script" },
   "unused.duplicate-tracker": { category: "unused", title: "Duplicate analytics tracker", what: "The same analytics/tag snippet (GA4, GTM, Meta Pixel, Hotjar...) appears twice on a page, e.g. in site code and page code.", severity: "medium", fix: "remove_script" },
