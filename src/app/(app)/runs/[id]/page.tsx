@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import { runDetail } from "@/lib/queries";
 import { FindingsList } from "@/components/findings";
-import { LiveLog } from "@/components/live-log";
+import { RunMonitor } from "@/components/run-progress";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
 import { runNow, shareRun, unshareRun } from "@/app/actions";
@@ -35,7 +35,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   await requireSignedIn(`/runs/${id}`);
   const data = await runDetail(id);
   if (!data) notFound();
-  const { run, site, client, findings, stateByFp, proposals, events, metrics, aiAnswers } = data;
+  const { run, site, client, findings, stateByFp, proposals, events, metrics, aiAnswers, recentDurations } = data;
   const live = run.status === "queued" || run.status === "running";
   const regressions = run.summary?.regressions;
   const visible = findings.filter((f) => {
@@ -130,8 +130,8 @@ export default async function RunPage({ params, searchParams }: { params: Promis
       )}
 
       <Card>
-        <CardHeader title="Agent activity" description={live ? "Live" : `${events.length} events`} />
-        <LiveLog streamId={run.id} initial={events} live={live} compact={!live} startedAt={run.startedAt ?? run.createdAt} />
+        <CardHeader title={live ? "Audit in progress" : "Agent activity"} description={live ? "The time estimate comes from this site's previous audits and the pages read so far." : `${events.length} events`} />
+        <RunMonitor streamId={run.id} initial={events} live={live} compact={!live} startedAt={run.startedAt ?? run.createdAt} pageBudget={Math.min(site.maxPages, 40)} recentDurations={recentDurations} />
       </Card>
 
       {run.status === "complete" && run.summary && (

@@ -15,29 +15,33 @@ const GLYPH: Record<RunEventKind, { g: string; cls: string }> = {
   done: { g: "✓", cls: "text-good-text" },
 };
 
-type Ev = Pick<RunEvent, "id" | "seq" | "kind" | "title" | "detail" | "createdAt">;
+export type Ev = Pick<RunEvent, "id" | "seq" | "kind" | "title" | "detail" | "createdAt">;
 
-// Shows an agent stream's activity and keeps polling while it is live. When a
-// terminal event arrives the server-rendered page data is refreshed too.
-export function LiveLog({ streamId, initial, live, compact = false, startedAt }: { streamId: string; initial: Ev[]; live: boolean; compact?: boolean; startedAt?: string | null }) {
+export interface Stream {
+  events: Ev[];
+  polling: boolean;
+  // Milliseconds since startedAt, ticking once a second while live.
+  elapsedMs: number | null;
+}
+
+// Polls an agent stream's events while it is live. When a terminal event
+// arrives the server-rendered page data is refreshed too. One hook per page:
+// the progress bar and the log share it.
+export function useStream(streamId: string, initial: Ev[], live: boolean, startedAt?: string | null): Stream {
   const [events, setEvents] = useState<Ev[]>(initial);
   const [polling, setPolling] = useState(live);
-  const [elapsed, setElapsed] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  const router = useRouter();
+  const lastSeq = events.length ? events[events.length - 1].seq : 0;
 
-  // Elapsed time while live, so a long audit visibly moves.
   useEffect(() => {
     if (!polling || !startedAt) return;
     const t0 = new Date(startedAt).getTime();
-    const fmt = () => {
-      const s = Math.max(0, Math.round((Date.now() - t0) / 1000));
-      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-    };
-    const id = setInterval(() => setElapsed(fmt()), 1000);
+    const tick = () => setElapsedMs(Math.max(0, Date.now() - t0));
+    tick();
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [polling, startedAt]);
-  const router = useRouter();
-  const bottom = useRef<HTMLDivElement>(null);
-  const lastSeq = events.length ? events[events.length - 1].seq : 0;
 
   // The header (status pill, timings) is server-rendered: refresh it when the
   // stream first produces events, every ~30 s while live, and at the end.
@@ -53,9 +57,8 @@ export function LiveLog({ streamId, initial, live, compact = false, startedAt }:
         if (cancelled) return;
         const first = data.events.length > 0 && lastSeq === 0;
         if (data.events.length) setEvents((prev) => [...prev, ...data.events]);
-        const terminal = data.events.some((e) => e.kind === "done" || e.kind === "error");
         ticks.current += 1;
-        if (terminal || !data.live) {
+        if (!data.live) {
           setPolling(false);
           router.refresh();
         } else if (first || ticks.current % 10 === 0) {
@@ -72,6 +75,22 @@ export function LiveLog({ streamId, initial, live, compact = false, startedAt }:
       clearInterval(id);
     };
   }, [polling, lastSeq, streamId, router]);
+
+  return { events, polling, elapsedMs };
+}
+
+function fmtClock(ms: number | null): string {
+  if (ms === null) return "";
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+// Shows an agent stream's activity. Pass `stream` to share a poller with other
+// components on the page; otherwise it polls on its own.
+export function LiveLog({ streamId, initial, live, compact = false, startedAt, stream }: { streamId: string; initial: Ev[]; live: boolean; compact?: boolean; startedAt?: string | null; stream?: Stream }) {
+  const own = useStream(streamId, initial, stream ? false : live, startedAt);
+  const { events, polling, elapsedMs } = stream ?? own;
+  const bottom = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (polling) bottom.current?.scrollIntoView({ block: "nearest" });
@@ -109,7 +128,7 @@ export function LiveLog({ streamId, initial, live, compact = false, startedAt }:
           <div className="text-ink-3">
             Working… <span className="num">{events.length}</span> steps so far
           </div>
-          <span className="text-xs text-ink-3 num">{elapsed ?? ""}</span>
+          <span className="text-xs text-ink-3 num">{fmtClock(elapsedMs)}</span>
         </div>
       )}
       <div ref={bottom} />

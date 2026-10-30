@@ -157,7 +157,19 @@ export async function runDetail(runId: string) {
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
   const findingIds = findings.map((f) => f.id);
   const proposals = findingIds.length ? await chunked(findingIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.findingId, ids) })) : [];
-  return { run, site: site!, client, findings, stateByFp, proposals, events, metrics, aiAnswers };
+  // How long this site's last audits took, for the live progress estimate.
+  const recent = await db.query.runs.findMany({
+    where: and(eq(schema.runs.siteId, run.siteId), eq(schema.runs.status, "complete")),
+    orderBy: desc(schema.runs.createdAt),
+    columns: { id: true, startedAt: true, finishedAt: true },
+    limit: 4,
+  });
+  const recentDurations = recent
+    .filter((r) => r.id !== run.id && r.startedAt && r.finishedAt)
+    .map((r) => new Date(r.finishedAt!).getTime() - new Date(r.startedAt!).getTime())
+    .filter((ms) => ms > 0)
+    .slice(0, 3);
+  return { run, site: site!, client, findings, stateByFp, proposals, events, metrics, aiAnswers, recentDurations };
 }
 
 // Everything the public report shows, by share token. No internal ids leak:
