@@ -48,6 +48,51 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   const env = await getEnv();
   const shareUrl = run.shareToken ? `${appUrl(env)}/share/${run.shareToken}` : null;
 
+  // Sharing and the agent log matter less than the result, so they sit at the
+  // bottom once the audit is complete; the live monitor stays on top while it runs.
+  const shareCard = (
+      {run.status === "complete" && (
+        <Card>
+          <CardHeader
+            title="Share this report"
+            description={shareUrl ? `Anyone with the link can read it — no sign-in. Shared by ${run.sharedBy ?? "—"} on ${fmtDate(run.sharedAt)}.` : "Create a read-only link to send to the client. It shows the score, summary and findings; nothing internal."}
+            actions={
+              shareUrl ? (
+                <form action={unshareRun}>
+                  <input type="hidden" name="runId" value={run.id} />
+                  <SubmitButton className={`${btnSecondary} ${btnSm}`} confirm="Stop sharing? The link stops working for everyone who has it." pendingLabel="Stopping…">
+                    Stop sharing
+                  </SubmitButton>
+                </form>
+              ) : (
+                <form action={shareRun}>
+                  <input type="hidden" name="runId" value={run.id} />
+                  <SubmitButton className={`${btnPrimary} ${btnSm}`} pendingLabel="Creating link…">
+                    Create share link
+                  </SubmitButton>
+                </form>
+              )
+            }
+          />
+          {shareUrl && (
+            <div className="space-y-2 p-5">
+              {shared && <p className="text-sm text-good-text">Link ready — copy it below.</p>}
+              <CopyField value={shareUrl} label="Share link" />
+              <p className="text-xs text-ink-3">
+                <Link href={`/share/${run.shareToken}`} target="_blank" className="text-accent hover:underline">
+                  Preview what they&apos;ll see
+                </Link>
+              </p>
+            </div>
+          )}
+        </Card>
+  );
+  const activityCard = (
+      <Card>
+        <CardHeader title={live ? "Audit in progress" : "Agent activity"} description={live ? "The time estimate comes from this site's previous audits and the pages read so far." : `${events.length} events`} />
+        <RunMonitor streamId={run.id} initial={events} live={live} compact={!live} startedAt={run.startedAt ?? run.createdAt} pageBudget={Math.min(site.maxPages, 40)} recentDurations={recentDurations} />
+      </Card>
+  );
   return (
     <div className="space-y-6">
       <Crumbs items={[{ href: "/clients", label: "Clients" }, ...(client ? [{ href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/audits`, label: "Audits" }] : []), { label: `${site.name} · ${fmtDate(run.createdAt)}` }]} />
@@ -92,47 +137,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         </Notice>
       )}
 
-      {run.status === "complete" && (
-        <Card>
-          <CardHeader
-            title="Share this report"
-            description={shareUrl ? `Anyone with the link can read it — no sign-in. Shared by ${run.sharedBy ?? "—"} on ${fmtDate(run.sharedAt)}.` : "Create a read-only link to send to the client. It shows the score, summary and findings; nothing internal."}
-            actions={
-              shareUrl ? (
-                <form action={unshareRun}>
-                  <input type="hidden" name="runId" value={run.id} />
-                  <SubmitButton className={`${btnSecondary} ${btnSm}`} confirm="Stop sharing? The link stops working for everyone who has it." pendingLabel="Stopping…">
-                    Stop sharing
-                  </SubmitButton>
-                </form>
-              ) : (
-                <form action={shareRun}>
-                  <input type="hidden" name="runId" value={run.id} />
-                  <SubmitButton className={`${btnPrimary} ${btnSm}`} pendingLabel="Creating link…">
-                    Create share link
-                  </SubmitButton>
-                </form>
-              )
-            }
-          />
-          {shareUrl && (
-            <div className="space-y-2 p-5">
-              {shared && <p className="text-sm text-good-text">Link ready — copy it below.</p>}
-              <CopyField value={shareUrl} label="Share link" />
-              <p className="text-xs text-ink-3">
-                <Link href={`/share/${run.shareToken}`} target="_blank" className="text-accent hover:underline">
-                  Preview what they&apos;ll see
-                </Link>
-              </p>
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader title={live ? "Audit in progress" : "Agent activity"} description={live ? "The time estimate comes from this site's previous audits and the pages read so far." : `${events.length} events`} />
-        <RunMonitor streamId={run.id} initial={events} live={live} compact={!live} startedAt={run.startedAt ?? run.createdAt} pageBudget={Math.min(site.maxPages, 40)} recentDurations={recentDurations} />
-      </Card>
+      {live && activityCard}
 
       {run.status === "complete" && run.summary && (
         <>
@@ -193,6 +198,9 @@ export default async function RunPage({ params, searchParams }: { params: Promis
 
         </>
       )}
+
+      {!live && shareCard}
+      {!live && activityCard}
 
       <Card>
         <CardHeader title="Run details" />
