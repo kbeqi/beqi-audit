@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { canSeeClient, requireTeam } from "@/app/gate";
 import { clientDetail } from "@/lib/queries";
-import { deleteClient, disconnectWorkspace, reimportSites, removeClientLogo, sendMonthlyReportNow, sendTestEmail, sendTestSlack, updateClient, uploadClientLogo } from "@/app/actions";
+import { deleteClient, disconnectGoogle, disconnectWorkspace, reimportSites, removeClientLogo, sendMonthlyReportNow, sendTestEmail, sendTestSlack, updateClient, uploadClientLogo } from "@/app/actions";
+import { googleConfigured } from "@/lib/google/oauth";
 import { emailConfigured } from "@/lib/email";
-import { getEnv } from "@/lib/env";
+import { appUrl, getEnv } from "@/lib/env";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { ConfirmButton } from "@/components/confirm-button";
 import { SubmitButton } from "@/components/submit-button";
@@ -23,10 +25,13 @@ export default async function ClientSettings({ params, searchParams }: { params:
   const { id } = await params;
   await requireTeam(`/clients/${id}/settings`);
   const q = await searchParams;
-  const mailReady = emailConfigured(await getEnv());
+  const env = await getEnv();
+  const mailReady = emailConfigured(env);
+  const googleReady = googleConfigured(env);
   const data = await clientDetail(id);
   if (!data) notFound();
-  const { client, sites, connections } = data;
+  const { client, sites, connections, googleConnection } = data;
+  const linkedSites = sites.filter((s) => s.site.gscProperty || s.site.ga4Property);
   const active = connections.filter((c) => !c.revokedAt);
   const logoUrl = client.logoKey ? `/api/clients/${client.id}/logo?v=${encodeURIComponent(client.logoUpdatedAt ?? "")}` : null;
 
@@ -231,6 +236,71 @@ export default async function ClientSettings({ params, searchParams }: { params:
                   </li>
                 ))}
               </ul>
+            )}
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Google: Search Console + GA4"
+              description="Read-only access to measure clicks, visits and AI referrals, and what changed after each fix"
+              actions={
+                googleReady ? (
+                  // A plain anchor: a prefetch would start the OAuth flow.
+                  <a href={`/api/google/authorize?client=${client.id}`} className={`${googleConnection ? btnSecondary : btnPrimary} ${btnSm}`}>
+                    {googleConnection ? "Connect a different account" : "Connect Google"}
+                  </a>
+                ) : undefined
+              }
+            />
+            {!googleReady ? (
+              <div className="p-5 text-sm text-ink-2">
+                <p>Google sign-in isn&apos;t configured on this deployment yet. One-time setup by Beqi:</p>
+                <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-ink-3">
+                  <li>Google Cloud console → APIs &amp; Services → enable the Search Console API, Google Analytics Admin API and Google Analytics Data API.</li>
+                  <li>Credentials → Create OAuth client (Web application) with the redirect URI <span className="font-mono text-ink-2">{`${appUrl(env)}/api/google/callback`}</span>.</li>
+                  <li>
+                    <span className="font-mono text-ink-2">wrangler secret put GOOGLE_CLIENT_ID</span> and <span className="font-mono text-ink-2">GOOGLE_CLIENT_SECRET</span>, then redeploy.
+                  </li>
+                </ol>
+              </div>
+            ) : googleConnection ? (
+              <div className="p-5 text-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="font-medium text-ink">{googleConnection.googleEmail ?? "Google account"}</div>
+                    <div className="text-xs text-ink-3">
+                      by {googleConnection.authorizedBy ?? "—"} · {fmtDay(googleConnection.createdAt)} · {linkedSites.length ? `${linkedSites.length} of ${sites.length} site${sites.length === 1 ? "" : "s"} linked` : "no site linked yet"}
+                    </div>
+                  </div>
+                  <form action={disconnectGoogle}>
+                    <input type="hidden" name="clientId" value={client.id} />
+                    <ConfirmButton message="Disconnect Google? Synced data stays; nothing new is pulled until it is connected again." className={`${btnDanger} ${btnSm}`} pendingLabel="Disconnecting…">
+                      Disconnect
+                    </ConfirmButton>
+                  </form>
+                </div>
+                <p className="mt-2 text-xs text-ink-3">
+                  Pick the Search Console and GA4 property per site in each site&apos;s settings
+                  {sites.length ? (
+                    <>
+                      {" "}
+                      (
+                      {sites.map((s, i) => (
+                        <span key={s.site.id}>
+                          {i > 0 ? ", " : ""}
+                          <Link href={`/sites/${s.site.id}`} className="text-accent hover:underline">
+                            {s.site.name}
+                          </Link>
+                        </span>
+                      ))}
+                      )
+                    </>
+                  ) : null}
+                  . The account needs at least read access to those properties; the client&apos;s own account, or a Beqi account they added, both work.
+                </p>
+              </div>
+            ) : (
+              <EmptyState title="Not connected" body="Sign in with the client's Google account (or a Beqi account that has access to their Search Console and GA4). Only read scopes are requested." />
             )}
           </Card>
 

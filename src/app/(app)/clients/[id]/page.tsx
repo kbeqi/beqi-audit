@@ -6,7 +6,8 @@ import { isTeam } from "@/lib/auth";
 import { clientDetail } from "@/lib/queries";
 import { clientProgress, lastDays } from "@/lib/progress";
 import { getDb } from "@/db";
-import { ProgressCard } from "@/components/progress-card";
+import { ProgressCard, type TrafficDelta } from "@/components/progress-card";
+import { statsSummary } from "@/lib/google/sync";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { Markdown } from "@/components/markdown";
 import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, ScoreRing, StatTile, btnSecondary, btnSm, fmtDate, timeAgo } from "@/components/ui";
@@ -31,7 +32,20 @@ export default async function ClientOverview({ params, searchParams }: { params:
   if (!data) notFound();
   const { client, sites, connections, latest, previousOfLatest, latestFindings, pendingFixes, activity, runs } = data;
   const window = lastDays(30);
-  const progress = latest ? await clientProgress(await getDb(), client.id, window.since, window.until) : null;
+  const db = await getDb();
+  const progress = latest ? await clientProgress(db, client.id, window.since, window.until) : null;
+  // Search and traffic across the linked sites, 28 days vs the 28 before.
+  const linked = sites.filter((s) => s.site.gscProperty || s.site.ga4Property);
+  let traffic: TrafficDelta | null = null;
+  if (linked.length) {
+    const sums = await Promise.all(linked.map((s) => statsSummary(db, s.site.id)));
+    if (sums.some((x) => x.hasData)) {
+      traffic = sums.reduce<TrafficDelta>(
+        (acc, x) => ({ clicks: acc.clicks + x.current.clicks, clicksBefore: acc.clicksBefore + x.previous.clicks, sessions: acc.sessions + x.current.sessions, sessionsBefore: acc.sessionsBefore + x.previous.sessions, aiSessions: acc.aiSessions + x.current.aiSessions, aiSessionsBefore: acc.aiSessionsBefore + x.previous.aiSessions }),
+        { clicks: 0, clicksBefore: 0, sessions: 0, sessionsBefore: 0, aiSessions: 0, aiSessionsBefore: 0 },
+      );
+    }
+  }
   // Clients see what happened to their site, not who at Beqi clicked what.
   const visibleActivity = team ? activity : activity.filter((a) => a.action.startsWith("fix.") || a.action.startsWith("run."));
   const waitingForClient = team ? pendingFixes : pendingFixes.filter((p) => p.status === "proposed");
@@ -69,7 +83,7 @@ export default async function ClientOverview({ params, searchParams }: { params:
         <StatTile label="Sites" value={<span className="num">{sites.length}</span>} hint={team ? `${connectedSites.length} connected` : "under Beqi's care"} />
       </div>
 
-      {progress && <ProgressCard progress={progress} clientId={client.id} label="Last 30 days · scores then and now, what was fixed, what is waiting" audience={team ? "team" : "client"} />}
+      {progress && <ProgressCard progress={progress} clientId={client.id} label="Last 30 days · scores then and now, what was fixed, what is waiting" audience={team ? "team" : "client"} traffic={traffic} />}
 
       {latest && latestSite ? (
         <Card>

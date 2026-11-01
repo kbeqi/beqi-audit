@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Client, Finding, FixProposal, Run, RunEvent, Site, WebflowConnection } from "@/db/schema";
+import { fixedPageEffects, statsSummary } from "@/lib/google/sync";
 
 export interface SiteCard {
   site: Site;
@@ -138,7 +139,12 @@ export async function siteDetail(siteId: string) {
   const [findings, metrics] = latest ? await Promise.all([openFindingsForRun(site.id, latest.id), db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, latest.id) })]) : [[], []];
   const states = findings.length ? await db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, site.id) }) : [];
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
-  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity, metrics };
+  const [stats, fixedPages, googleConnection] = await Promise.all([
+    site.gscProperty || site.ga4Property ? statsSummary(db, site.id) : Promise.resolve(null),
+    site.gscProperty || site.ga4Property ? fixedPageEffects(db, site.id) : Promise.resolve([]),
+    db.query.googleConnections.findFirst({ where: and(eq(schema.googleConnections.clientId, site.clientId), isNull(schema.googleConnections.revokedAt)) }),
+  ]);
+  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity, metrics, stats, fixedPages, googleConnection: googleConnection ?? null };
 }
 
 export async function runDetail(runId: string) {
@@ -204,9 +210,10 @@ export async function clientDetail(clientId: string) {
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
   if (!client) return null;
-  const [sites, connections] = await Promise.all([
+  const [sites, connections, googleConnections] = await Promise.all([
     db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id), orderBy: schema.sites.name }),
     db.query.webflowConnections.findMany({ where: eq(schema.webflowConnections.clientId, client.id), orderBy: desc(schema.webflowConnections.createdAt) }),
+    db.query.googleConnections.findMany({ where: eq(schema.googleConnections.clientId, client.id), orderBy: desc(schema.googleConnections.createdAt) }),
   ]);
   const cards = await siteCards(sites);
   const siteIds = sites.map((s) => s.id);
@@ -225,7 +232,7 @@ export async function clientDetail(clientId: string) {
   const previousOfLatest = latest ? (completed.find((r) => r.siteId === latest.siteId && r.id !== latest.id) ?? null) : null;
   const latestFindings = latest ? await openFindingsForRun(latest.siteId, latest.id) : [];
   const pendingFixes = proposals.filter((p) => OPEN_PROPOSAL_STATUSES.includes(p.status as (typeof OPEN_PROPOSAL_STATUSES)[number]));
-  return { client, sites: cards, connections, runs, latest, previousOfLatest, latestFindings, proposals, pendingFixes, activity: activity.slice(0, 15) };
+  return { client, sites: cards, connections, googleConnection: googleConnections.find((g) => !g.revokedAt) ?? null, runs, latest, previousOfLatest, latestFindings, proposals, pendingFixes, activity: activity.slice(0, 15) };
 }
 
 // Just what the client header and tabs need.

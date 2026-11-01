@@ -4,6 +4,7 @@ import { newId } from "@/lib/id";
 import { monthlyEmail, parseRecipients, reminderEmail, sendEmail } from "@/lib/email";
 import { clientProgress, previousMonth } from "@/lib/progress";
 import { monthlySlack, postSlack, slackConfigured } from "@/lib/slack";
+import { syncAllStats, windowTotals } from "@/lib/google/sync";
 import { appUrl } from "@/lib/env";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startRun } from "./start";
@@ -62,6 +63,9 @@ export async function runScheduler(env: CloudflareEnv, now: Date): Promise<{ sta
     );
     if (result === "sent") reminders++;
   }
+  // Google data for yesterday is in by the early morning (UTC); sync once a
+  // day from 05:00 on, before the monthly report so it has the numbers.
+  if (now.getUTCHours() >= 5) await syncAllStats(env, now).catch((e) => console.error("stats sync failed", e));
   const monthly = await sendMonthlyReports(env, now);
   return { started, reminders, refreshed, monthly };
 }
@@ -86,6 +90,18 @@ export async function sendMonthlyReports(env: CloudflareEnv, now: Date, force = 
     // Nothing audited yet: no report, nothing to say.
     if (progress.sites.every((s) => s.score == null)) continue;
     const link = `${appUrl(env)}/clients/${client.id}`;
+    // Search and traffic for the month vs the month before, when synced.
+    const startIso = since.toISOString().slice(0, 10);
+    const endIso = new Date(until.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const prevSince = new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth() - 1, 1));
+    const prevStartIso = prevSince.toISOString().slice(0, 10);
+    const prevEndIso = new Date(since.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const traffic = await Promise.all(
+      progress.sites.map(async (s) => {
+        const [cur, prev] = await Promise.all([windowTotals(db, s.siteId, startIso, endIso), windowTotals(db, s.siteId, prevStartIso, prevEndIso)]);
+        return cur ? { siteId: s.siteId, cur, prev } : null;
+      }),
+    );
     if (to.length) {
       const r = await sendEmail(
         env,
@@ -94,7 +110,19 @@ export async function sendMonthlyReports(env: CloudflareEnv, now: Date, force = 
           to,
           clientName: client.name,
           month: label,
-          sites: progress.sites.map((s) => ({ name: s.name, score: s.score, scoreBefore: s.scoreBefore, openFindings: s.openFindings, openBefore: s.openBefore, vitals: s.vitalsPassing, ai: s.aiMentioned ? { now: s.aiMentioned.now, of: s.aiMentioned.of, before: s.aiMentioned.before } : null })),
+          sites: progress.sites.map((s) => {
+            const t = traffic.find((x) => x?.siteId === s.siteId) ?? null;
+            return {
+              name: s.name,
+              score: s.score,
+              scoreBefore: s.scoreBefore,
+              openFindings: s.openFindings,
+              openBefore: s.openBefore,
+              vitals: s.vitalsPassing,
+              ai: s.aiMentioned ? { now: s.aiMentioned.now, of: s.aiMentioned.of, before: s.aiMentioned.before } : null,
+              traffic: t ? { clicks: t.cur.clicks, clicksBefore: t.prev?.clicks ?? null, sessions: t.cur.sessions, sessionsBefore: t.prev?.sessions ?? null, aiSessions: t.cur.aiSessions, aiSessionsBefore: t.prev?.aiSessions ?? null, keyEvents: t.cur.keyEvents, position: t.cur.position, positionBefore: t.prev?.position ?? null } : null,
+            };
+          }),
           fixesApplied: progress.fixesAppliedTitles,
           resolved: progress.resolved,
           waiting: progress.waiting,

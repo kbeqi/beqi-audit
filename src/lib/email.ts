@@ -142,7 +142,16 @@ export function monthlyEmail(opts: {
   to: string[];
   clientName: string;
   month: string;
-  sites: { name: string; score: number | null; scoreBefore: number | null; openFindings: number | null; openBefore: number | null; vitals: { passing: number; pages: number } | null; ai: { now: number; of: number; before: number | null } | null }[];
+  sites: {
+    name: string;
+    score: number | null;
+    scoreBefore: number | null;
+    openFindings: number | null;
+    openBefore: number | null;
+    vitals: { passing: number; pages: number } | null;
+    ai: { now: number; of: number; before: number | null } | null;
+    traffic?: { clicks: number; clicksBefore: number | null; sessions: number; sessionsBefore: number | null; aiSessions: number; aiSessionsBefore: number | null; keyEvents: number; position: number | null; positionBefore: number | null } | null;
+  }[];
   fixesApplied: string[];
   resolved: number;
   waiting: number;
@@ -160,6 +169,11 @@ export function monthlyEmail(opts: {
     if (s.openFindings != null) parts.push(`${s.openFindings} open issue${s.openFindings === 1 ? "" : "s"}${s.openBefore != null ? ` (was ${s.openBefore})` : ""}`);
     if (s.vitals) parts.push(`Core Web Vitals pass on ${s.vitals.passing} of ${s.vitals.pages} key pages`);
     if (s.ai) parts.push(`AI assistants mention you in ${s.ai.now} of ${s.ai.of} sampled answers${s.ai.before != null ? ` (was ${s.ai.before})` : ""}`);
+    if (s.traffic) {
+      const pct = (now: number, before: number | null) => (before == null || before === 0 ? "" : ` (${now >= before ? "+" : ""}${Math.round(((now - before) / before) * 100)}% vs the month before)`);
+      parts.push(`${s.traffic.clicks.toLocaleString("en-GB")} clicks from Google search${pct(s.traffic.clicks, s.traffic.clicksBefore)}${s.traffic.position != null ? `, average position ${s.traffic.position}${s.traffic.positionBefore != null ? ` (was ${s.traffic.positionBefore})` : ""}` : ""}`);
+      if (s.traffic.sessions || s.traffic.sessionsBefore) parts.push(`${s.traffic.sessions.toLocaleString("en-GB")} visits${pct(s.traffic.sessions, s.traffic.sessionsBefore)}, ${s.traffic.aiSessions} from AI assistants${pct(s.traffic.aiSessions, s.traffic.aiSessionsBefore)}${s.traffic.keyEvents ? `, ${s.traffic.keyEvents} key events` : ""}`);
+    }
     return { name: s.name, parts };
   });
   const fixes = opts.fixesApplied.slice(0, 8);

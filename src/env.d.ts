@@ -9,6 +9,9 @@ declare global {
     PSI_API_KEY?: string;
     // Optional: adds Perplexity to the AI visibility sample (Claude is always used).
     PERPLEXITY_API_KEY?: string;
+    // Optional: Google OAuth client for Search Console + GA4 (read-only).
+    GOOGLE_CLIENT_ID?: string;
+    GOOGLE_CLIENT_SECRET?: string;
   }
 }
 

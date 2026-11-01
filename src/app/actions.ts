@@ -15,6 +15,7 @@ import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startFix, startRun } from "@/audit/start";
 import { sendMonthlyReports } from "@/audit/scheduler";
 import { postSlack, slackConfigured } from "@/lib/slack";
+import { syncSiteStats } from "@/lib/google/sync";
 
 async function log(action: string, detail: Record<string, unknown>, siteId?: string | null) {
   const db = await getDb();
@@ -198,7 +199,14 @@ export async function updateSiteSettings(formData: FormData) {
       .filter(Boolean)
       .slice(0, 10);
     const auditOnPublish = formData.get("auditOnPublish") === "on";
+    // Google properties come from the dropdowns (empty = unlink); a changed
+    // property clears the sync marker so the next tick re-pulls the history.
+    const gscProperty = String(formData.get("gscProperty") ?? "").trim() || null;
+    const ga4Property = String(formData.get("ga4Property") ?? "").trim() || null;
+    if (ga4Property && !/^properties\/\d+$/.test(ga4Property)) throw new Error("GA4 property should look like properties/123456");
     const db = await getDb();
+    const before = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId), columns: { gscProperty: true, ga4Property: true } });
+    const googleChanged = !!before && (before.gscProperty !== gscProperty || before.ga4Property !== ga4Property);
     await db
       .update(schema.sites)
       .set({
@@ -209,10 +217,19 @@ export async function updateSiteSettings(formData: FormData) {
         isEnterprise: formData.get("isEnterprise") === "on",
         auditOnPublish,
         aiPrompts: aiPrompts.length ? aiPrompts : null,
+        gscProperty,
+        ga4Property,
+        ...(googleChanged ? { statsSyncedFor: null } : {}),
         ...(baseUrl ? { baseUrl } : {}),
       })
       .where(eq(schema.sites.id, siteId));
-    await log("site.settings_updated", { freq, keyPages, maxPages, auditOnPublish, aiPrompts: aiPrompts.length }, siteId);
+    await log("site.settings_updated", { freq, keyPages, maxPages, auditOnPublish, aiPrompts: aiPrompts.length, gscProperty, ga4Property }, siteId);
+    if (googleChanged && (gscProperty || ga4Property)) {
+      // Pull the history now so the page has numbers right after saving.
+      const { env, ctx } = await getCtx();
+      const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+      if (site) ctx.waitUntil(syncSiteStats(env, site, 120).catch(() => {}));
+    }
     // Make sure Webflow tells us about publishes when the option is on.
     if (auditOnPublish) {
       const { env } = await getCtx();
@@ -515,5 +532,36 @@ export async function disconnectWorkspace(formData: FormData) {
     await log("webflow.disconnected", { connectionId: id, clientId });
     revalidatePath(`/clients/${clientId}`, "layout");
     redirect(`/clients/${clientId}/settings?notice=${encodeURIComponent("Workspace disconnected.")}`);
+  });
+}
+
+export async function disconnectGoogle(formData: FormData) {
+  return guarded("disconnectGoogle", async () => {
+    await teamActor();
+    const clientId = String(formData.get("clientId"));
+    const db = await getDb();
+    await db.update(schema.googleConnections).set({ revokedAt: nowIso() }).where(eq(schema.googleConnections.clientId, clientId));
+    await log("google.disconnected", { clientId });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    redirect(`/clients/${clientId}/settings?notice=${encodeURIComponent("Google disconnected. Synced data is kept; nothing new is pulled until it is connected again.")}`);
+  });
+}
+
+// Pulls the last 120 days for one site right now (after linking properties,
+// or to check a failed nightly sync).
+export async function syncGoogleNow(formData: FormData) {
+  return guarded("syncGoogleNow", async () => {
+    await teamActor();
+    const siteId = String(formData.get("siteId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+    if (!site) throw new Error("Site not found");
+    if (!site.gscProperty && !site.ga4Property) redirect(`/sites/${siteId}?error=${encodeURIComponent("Link a Search Console or GA4 property in the site settings first.")}`);
+    const r = await syncSiteStats(env, site, 120);
+    await db.update(schema.sites).set({ statsSyncedFor: new Date().toISOString().slice(0, 10) }).where(eq(schema.sites.id, siteId));
+    revalidatePath(`/sites/${siteId}`);
+    if (r.errors.length) redirect(`/sites/${siteId}?error=${encodeURIComponent(r.errors.join(" · "))}`);
+    redirect(`/sites/${siteId}?notice=${encodeURIComponent(`Google data synced: ${r.gsc ?? 0} Search Console rows, ${r.ga4 ?? 0} GA4 rows, ${r.ai ?? 0} AI-referral rows.`)}`);
   });
 }

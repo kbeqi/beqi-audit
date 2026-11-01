@@ -161,6 +161,13 @@ export const sites = sqliteTable(
     webhookSecret: text("webhook_secret"),
     // Prompts for the AI-visibility sample; null = use the audit's suggestions.
     aiPrompts: text("ai_prompts", { mode: "json" }).$type<string[]>(),
+    // Google measurement: a Search Console property ("sc-domain:example.com" or
+    // "https://www.example.com/") and a GA4 property ("properties/123"), read
+    // through the client's google_connections row. Null = not linked.
+    gscProperty: text("gsc_property"),
+    ga4Property: text("ga4_property"),
+    // YYYY-MM-DD of the last nightly stats sync, so each day syncs once.
+    statsSyncedFor: text("stats_synced_for"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [
@@ -496,6 +503,57 @@ export const auditLog = sqliteTable(
   (t) => [index("audit_log_site_idx").on(t.siteId, t.createdAt)],
 );
 
+// One Google sign-in per client (the client's own account, or a Beqi account
+// with access to their Search Console and GA4). Read-only scopes only.
+export const googleConnections = sqliteTable(
+  "google_connections",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    googleEmail: text("google_email"),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+    expiresAt: text("expires_at").notNull(),
+    scopes: text("scopes").notNull(),
+    authorizedBy: text("authorized_by"),
+    // Set when a refresh fails for good (revoked at Google); a person reconnects.
+    revokedAt: text("revoked_at"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("google_connections_client_idx").on(t.clientId)],
+);
+
+// "gsc": Search Console clicks / impressions / position. "ga4": sessions and
+// key events by landing page. "ga4_ai": sessions referred by AI assistants.
+export type StatsSource = "gsc" | "ga4" | "ga4_ai";
+
+// Daily rows per site, page and source; page "*" is the site total. Synced
+// nightly from Google, kept forever (small), so pages can be compared before
+// and after a fix and months against each other.
+export const pageStats = sqliteTable(
+  "page_stats",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    source: text("source").$type<StatsSource>().notNull(),
+    date: text("date").notNull(),
+    page: text("page").notNull(),
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    // Average position, weighted by impressions when aggregated.
+    position: real("position"),
+    sessions: integer("sessions").notNull().default(0),
+    keyEvents: integer("key_events").notNull().default(0),
+  },
+  (t) => [uniqueIndex("page_stats_key").on(t.siteId, t.source, t.date, t.page), index("page_stats_site_date_idx").on(t.siteId, t.date)],
+);
+
+export type GoogleConnection = typeof googleConnections.$inferSelect;
+export type PageStat = typeof pageStats.$inferSelect;
 export type Client = typeof clients.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Run = typeof runs.$inferSelect;

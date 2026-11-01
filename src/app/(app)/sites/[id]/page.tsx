@@ -14,6 +14,11 @@ import { SubmitButton } from "@/components/submit-button";
 import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
 import { PerformanceCard } from "@/components/insights";
+import { TrafficCard } from "@/components/traffic-card";
+import { listGa4Properties, listGscSites, type Ga4Property, type GscSite } from "@/lib/google/api";
+import { freshGoogleConnection } from "@/lib/google/oauth";
+import { getEnv } from "@/lib/env";
+import type { GoogleConnection } from "@/db/schema";
 import { Card, CardHeader, Crumbs, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, hostOf, inputCls, labelCls, timeAgo, triggerLabel } from "@/components/ui";
 import { SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
 
@@ -28,16 +33,19 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return { title: site.name };
 }
 
-export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string; saved?: string }> }) {
+export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string; saved?: string; notice?: string; error?: string }> }) {
   const { id } = await params;
-  const { sev, saved } = await searchParams;
+  const { sev, saved, notice, error } = await searchParams;
   const actor = await requireSignedIn(`/sites/${id}`);
   const data = await siteDetail(id);
   if (!data) notFound();
-  const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, metrics } = data;
+  const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, metrics, stats, fixedPages, googleConnection } = data;
   const team = isTeam(actor);
   if (!team && site.clientId !== actor.clientId) notFound();
   const role = team ? "team" : "client";
+  // Property lists for the settings dropdowns, read live from Google when the
+  // client has a connection; a failure only means typing the id by hand.
+  const googleLists = team && googleConnection ? await loadGoogleLists(googleConnection) : null;
   const running = runs.find((r) => r.status === "running" || r.status === "queued") ?? null;
   const history = runs.filter((r) => r.status === "complete").map((r) => r.scoreOverall).reverse().slice(-12);
   const back = `/sites/${site.id}`;
@@ -77,6 +85,8 @@ export default async function SitePage({ params, searchParams }: { params: Promi
       />
 
       {saved && <Notice tone="good">Settings saved.</Notice>}
+      {notice && <Notice tone="good">{decodeURIComponent(notice)}</Notice>}
+      {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
       {team && !connection && (
         <Notice tone="warn">
           This site has no active Webflow connection.{" "}
@@ -203,6 +213,8 @@ export default async function SitePage({ params, searchParams }: { params: Promi
         </Card>
       )}
 
+      <TrafficCard summary={stats} fixedPages={fixedPages} siteId={site.id} siteName={site.name} linked={!!(site.gscProperty || site.ga4Property)} googleConnected={!!googleConnection} audience={team ? "team" : "client"} />
+
       <Card id="fixes">
         <CardHeader title={team ? "Proposed fixes" : "Recommended fixes"} count={openProposals.length} description={team ? "Nothing is written to Webflow until you approve it. Applied changes go live on the site's next publish." : "Nothing is changed until you approve it. Small, safe changes are applied right away; larger ones are applied by Beqi after your approval."} />
         {openProposals.length === 0 ? (
@@ -319,6 +331,59 @@ export default async function SitePage({ params, searchParams }: { params: Promi
               <textarea id="aiPrompts" name="aiPrompts" rows={4} defaultValue={site.aiPrompts?.join("\n") ?? ""} placeholder={"best Webflow agency in Tirana\nhow much does a Webflow site cost"} className={inputCls} />
               <p className="mt-1 text-xs text-ink-3">What a prospective customer would ask an AI assistant. Empty means the audit writes its own questions from the site&apos;s content.</p>
             </div>
+            <fieldset className="rounded-lg border border-line p-3">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Google measurement</legend>
+              {googleConnection ? (
+                <p className="mb-2 text-xs text-ink-3">Connected as {googleConnection.googleEmail ?? "a Google account"}. Pick the properties that belong to this site; the last 120 days are pulled right after saving.</p>
+              ) : (
+                <p className="mb-2 text-xs text-ink-3">
+                  Connect the client&apos;s Google account first in{" "}
+                  <Link href={`/clients/${client.id}/settings`} className="text-accent hover:underline">
+                    client Settings
+                  </Link>
+                  , then pick the properties here.
+                </p>
+              )}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="gscProperty" className={labelCls}>
+                    Search Console property
+                  </label>
+                  {googleLists?.gsc.length ? (
+                    <select id="gscProperty" name="gscProperty" defaultValue={site.gscProperty ?? ""} className={inputCls}>
+                      <option value="">Not linked</option>
+                      {googleLists.gsc.map((g) => (
+                        <option key={g.siteUrl} value={g.siteUrl}>
+                          {g.siteUrl}
+                        </option>
+                      ))}
+                      {site.gscProperty && !googleLists.gsc.some((g) => g.siteUrl === site.gscProperty) && <option value={site.gscProperty}>{site.gscProperty} (not visible to this account)</option>}
+                    </select>
+                  ) : (
+                    <input id="gscProperty" name="gscProperty" defaultValue={site.gscProperty ?? ""} placeholder="sc-domain:example.com" className={inputCls} />
+                  )}
+                </div>
+                <div>
+                  <label htmlFor="ga4Property" className={labelCls}>
+                    GA4 property
+                  </label>
+                  {googleLists?.ga4.length ? (
+                    <select id="ga4Property" name="ga4Property" defaultValue={site.ga4Property ?? ""} className={inputCls}>
+                      <option value="">Not linked</option>
+                      {googleLists.ga4.map((g) => (
+                        <option key={g.property} value={g.property}>
+                          {g.displayName} ({g.account})
+                        </option>
+                      ))}
+                      {site.ga4Property && !googleLists.ga4.some((g) => g.property === site.ga4Property) && <option value={site.ga4Property}>{site.ga4Property} (not visible to this account)</option>}
+                    </select>
+                  ) : (
+                    <input id="ga4Property" name="ga4Property" defaultValue={site.ga4Property ?? ""} placeholder="properties/123456789" className={inputCls} />
+                  )}
+                </div>
+              </div>
+              {googleLists?.error && <p className="mt-2 text-xs text-critical-text">Could not list properties: {googleLists.error}</p>}
+            </fieldset>
             <label className="flex items-center gap-2 text-ink-2">
               <input name="isEnterprise" type="checkbox" defaultChecked={site.isEnterprise} />
               Enterprise plan (Analyze / AEO analytics available)
@@ -372,4 +437,14 @@ export default async function SitePage({ params, searchParams }: { params: Promi
       </div>
     </div>
   );
+}
+
+async function loadGoogleLists(connection: GoogleConnection): Promise<{ gsc: GscSite[]; ga4: Ga4Property[]; error: string | null }> {
+  try {
+    const fresh = await freshGoogleConnection(await getEnv(), connection);
+    const [gsc, ga4] = await Promise.all([listGscSites(fresh.accessToken).catch(() => [] as GscSite[]), listGa4Properties(fresh.accessToken).catch(() => [] as Ga4Property[])]);
+    return { gsc, ga4, error: null };
+  } catch (e) {
+    return { gsc: [], ga4: [], error: String((e as Error).message ?? e).slice(0, 200) };
+  }
 }

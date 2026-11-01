@@ -5,7 +5,22 @@ import { Card, CardHeader, Delta, Sparkline } from "./ui";
 // "Is it getting better?" in one card: score trend per site, what was fixed
 // and resolved in the period, what is waiting. Shared by the team and the
 // client; only the wording of the waiting line differs.
-export function ProgressCard({ progress, clientId, label, audience = "team" }: { progress: ClientProgress; clientId: string; label: string; audience?: "team" | "client" }) {
+export interface TrafficDelta {
+  clicks: number;
+  clicksBefore: number;
+  sessions: number;
+  sessionsBefore: number;
+  aiSessions: number;
+  aiSessionsBefore: number;
+}
+
+function pctHint(now: number, before: number): string | undefined {
+  if (!before) return undefined;
+  const d = Math.round(((now - before) / before) * 100);
+  return `${d > 0 ? "+" : ""}${d}% vs previous 28 days`;
+}
+
+export function ProgressCard({ progress, clientId, label, audience = "team", traffic = null }: { progress: ClientProgress; clientId: string; label: string; audience?: "team" | "client"; traffic?: TrafficDelta | null }) {
   const scored = progress.sites.filter((s) => s.score != null);
   if (scored.length === 0) return null;
   const ai = progress.sites.find((s) => s.aiMentioned)?.aiMentioned ?? null;
@@ -21,6 +36,11 @@ export function ProgressCard({ progress, clientId, label, audience = "team" }: {
   ];
   if (vitals.pages > 0) stats.push({ label: "Core Web Vitals", value: `${vitals.passing}/${vitals.pages}`, hint: "key pages passing" });
   if (ai) stats.push({ label: "AI answers mention you", value: `${ai.now}/${ai.of}`, hint: ai.before != null && ai.ofBefore ? `was ${ai.before}/${ai.ofBefore}` : "sampled" });
+  if (traffic) {
+    stats.push({ label: "Clicks from Google", value: traffic.clicks.toLocaleString("en-GB"), hint: pctHint(traffic.clicks, traffic.clicksBefore) ?? "last 28 days", tone: traffic.clicksBefore && traffic.clicks > traffic.clicksBefore ? "good" : undefined });
+    stats.push({ label: "Visits", value: traffic.sessions.toLocaleString("en-GB"), hint: pctHint(traffic.sessions, traffic.sessionsBefore) ?? "last 28 days" });
+    stats.push({ label: "Visits from AI", value: traffic.aiSessions.toLocaleString("en-GB"), hint: pctHint(traffic.aiSessions, traffic.aiSessionsBefore) ?? "last 28 days", tone: traffic.aiSessionsBefore && traffic.aiSessions > traffic.aiSessionsBefore ? "good" : undefined });
+  }
 
   return (
     <Card>

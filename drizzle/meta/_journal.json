@@ -64,6 +64,13 @@
       "when": 1793556801103,
       "tag": "0008_worried_night_thrasher",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793557352505,
+      "tag": "0009_strong_rafael_vega",
+      "breakpoints": true
     }
   ]
 }
