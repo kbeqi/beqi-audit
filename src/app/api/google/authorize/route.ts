@@ -10,8 +10,13 @@ export const GOOGLE_PENDING_COOKIE = "beqi_google_pending";
 // Sends a Beqi team member (or the client, from their hub) to Google to grant
 // read-only Search Console and GA4 access for one client.
 export async function GET(request: Request) {
-  await teamActor();
   const env = await getEnv();
+  // A signed-out or client-role visitor is sent to sign in, not shown an error.
+  try {
+    await teamActor();
+  } catch {
+    return NextResponse.redirect(`${appUrl(env, request)}/login?next=${encodeURIComponent("/clients")}`);
+  }
   const url = new URL(request.url);
   const clientId = url.searchParams.get("client");
   if (!clientId) return NextResponse.json({ error: "client is required" }, { status: 400 });

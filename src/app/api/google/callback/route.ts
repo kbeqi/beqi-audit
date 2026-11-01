@@ -30,7 +30,12 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${home}/?error=${encodeURIComponent(url.searchParams.get("error") ?? "The Google sign-in did not complete. Try again.")}`);
   }
   const back = `${home}/clients/${pending.clientId}/settings`;
-  const actor = (await teamActor()).email;
+  let actor: string;
+  try {
+    actor = (await teamActor()).email;
+  } catch {
+    return NextResponse.redirect(`${home}/login?next=${encodeURIComponent(`/clients/${pending.clientId}/settings`)}`);
+  }
   const db = await getDb();
   try {
     const t = await exchangeGoogleCode(env, { code, redirectUri: `${home}/api/google/callback` });
