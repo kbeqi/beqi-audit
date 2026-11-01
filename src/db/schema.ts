@@ -129,6 +129,9 @@ export const FREQUENCY_LABELS: Record<AuditFrequency, string> = {
   off: "Off (manual only)",
 };
 
+export type AiSampleEvery = "monthly" | "audit" | "off";
+export const AI_SAMPLE_LABELS: Record<AiSampleEvery, string> = { monthly: "Once a month (with the report)", audit: "With every audit", off: "Off" };
+
 export const sites = sqliteTable(
   "sites",
   {
@@ -159,8 +162,16 @@ export const sites = sqliteTable(
     auditOnPublish: integer("audit_on_publish", { mode: "boolean" }).notNull().default(true),
     webhookId: text("webhook_id"),
     webhookSecret: text("webhook_secret"),
-    // Prompts for the AI-visibility sample; null = use the audit's suggestions.
+    // The frozen question set for the AI answers check; null = not agreed yet,
+    // the audit's own suggestions are used (and offered as candidates).
     aiPrompts: text("ai_prompts", { mode: "json" }).$type<string[]>(),
+    // Questions the latest audit suggested, for the team to adopt into the set.
+    aiPromptCandidates: text("ai_prompt_candidates", { mode: "json" }).$type<string[]>(),
+    // How often the AI answers check runs: once a month (the service's reporting
+    // cadence), with every audit, or never.
+    aiSampleEvery: text("ai_sample_every").$type<AiSampleEvery>().notNull().default("monthly"),
+    // "YYYY-MM" of the last check, so monthly means once a month.
+    aiSampledFor: text("ai_sampled_for"),
     // Google measurement: a Search Console property ("sc-domain:example.com" or
     // "https://www.example.com/") and a GA4 property ("properties/123"), read
     // through the client's google_connections row. Null = not linked.

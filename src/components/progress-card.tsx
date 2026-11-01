@@ -35,7 +35,7 @@ export function ProgressCard({ progress, clientId, label, audience = "team", tra
     { label: audience === "client" ? "Waiting for you" : "Waiting for approval", value: String(progress.waiting), tone: progress.waiting > 0 ? "warn" : undefined },
   ];
   if (vitals.pages > 0) stats.push({ label: "Core Web Vitals", value: `${vitals.passing}/${vitals.pages}`, hint: "key pages passing" });
-  if (ai) stats.push({ label: "AI answers mention you", value: `${ai.now}/${ai.of}`, hint: ai.before != null && ai.ofBefore ? `was ${ai.before}/${ai.ofBefore}` : "sampled" });
+  if (ai) stats.push({ label: "AI answers naming you", value: `${ai.now}/${ai.of}`, hint: ai.before != null && ai.ofBefore ? `was ${ai.before}/${ai.ofBefore}` : "monthly check" });
   if (traffic) {
     stats.push({ label: "Clicks from Google", value: traffic.clicks.toLocaleString("en-GB"), hint: pctHint(traffic.clicks, traffic.clicksBefore) ?? "last 28 days", tone: traffic.clicksBefore && traffic.clicks > traffic.clicksBefore ? "good" : undefined });
     stats.push({ label: "Visits", value: traffic.sessions.toLocaleString("en-GB"), hint: pctHint(traffic.sessions, traffic.sessionsBefore) ?? "last 28 days" });

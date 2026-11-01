@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { revalidatePath } from "next/cache";
 import { getDb, schema } from "@/db";
-import { FREQUENCY_LABELS, type AuditFrequency } from "@/db/schema";
+import { FREQUENCY_LABELS, type AiSampleEvery, type AuditFrequency } from "@/db/schema";
 import { currentActor, currentActorFull, isTeam, teamActor } from "@/lib/auth";
 import { appUrl, getCtx } from "@/lib/env";
 import { parseRecipients, sendEmail, testEmail } from "@/lib/email";
@@ -197,8 +197,10 @@ export async function updateSiteSettings(formData: FormData) {
       .split("\n")
       .map((s) => s.trim())
       .filter(Boolean)
-      .slice(0, 10);
+      .slice(0, 15);
     const auditOnPublish = formData.get("auditOnPublish") === "on";
+    const aiRaw = String(formData.get("aiSampleEvery") ?? "monthly");
+    const aiSampleEvery: AiSampleEvery = aiRaw === "audit" || aiRaw === "off" ? aiRaw : "monthly";
     // Google properties come from the dropdowns (empty = unlink); a changed
     // property clears the sync marker so the next tick re-pulls the history.
     const gscProperty = String(formData.get("gscProperty") ?? "").trim() || null;
@@ -217,13 +219,14 @@ export async function updateSiteSettings(formData: FormData) {
         isEnterprise: formData.get("isEnterprise") === "on",
         auditOnPublish,
         aiPrompts: aiPrompts.length ? aiPrompts : null,
+        aiSampleEvery,
         gscProperty,
         ga4Property,
         ...(googleChanged ? { statsSyncedFor: null } : {}),
         ...(baseUrl ? { baseUrl } : {}),
       })
       .where(eq(schema.sites.id, siteId));
-    await log("site.settings_updated", { freq, keyPages, maxPages, auditOnPublish, aiPrompts: aiPrompts.length, gscProperty, ga4Property }, siteId);
+    await log("site.settings_updated", { freq, keyPages, maxPages, auditOnPublish, aiPrompts: aiPrompts.length, aiSampleEvery, gscProperty, ga4Property }, siteId);
     if (googleChanged && (gscProperty || ga4Property)) {
       // Pull the history now so the page has numbers right after saving.
       const { env, ctx } = await getCtx();
@@ -563,5 +566,23 @@ export async function syncGoogleNow(formData: FormData) {
     revalidatePath(`/sites/${siteId}`);
     if (r.errors.length) redirect(`/sites/${siteId}?error=${encodeURIComponent(r.errors.join(" · "))}`);
     redirect(`/sites/${siteId}?notice=${encodeURIComponent(`Google data synced: ${r.gsc ?? 0} Search Console rows, ${r.ga4 ?? 0} GA4 rows, ${r.ai ?? 0} AI-referral rows.`)}`);
+  });
+}
+
+// Adds one of the audit's suggested questions to the site's frozen set.
+export async function adoptAiPrompt(formData: FormData) {
+  return guarded("adoptAiPrompt", async () => {
+    await teamActor();
+    const siteId = String(formData.get("siteId"));
+    const prompt = String(formData.get("prompt") ?? "").trim();
+    const db = await getDb();
+    const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+    if (!site || !prompt) throw new Error("Site or question missing");
+    const set = [...(site.aiPrompts ?? [])];
+    if (!set.includes(prompt) && set.length < 15) set.push(prompt);
+    await db.update(schema.sites).set({ aiPrompts: set, aiPromptCandidates: (site.aiPromptCandidates ?? []).filter((c) => c !== prompt) }).where(eq(schema.sites.id, siteId));
+    await log("site.settings_updated", { aiPrompts: set.length, adopted: prompt }, siteId);
+    revalidatePath(`/sites/${siteId}`);
+    redirect(`/sites/${siteId}?notice=${encodeURIComponent("Question added to the set.")}#settings`);
   });
 }

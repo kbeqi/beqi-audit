@@ -129,8 +129,10 @@ export async function stepAgent(env: RunEnv, runId: string): Promise<{ reportCha
   if (previousRun) {
     const rows = await db.query.findings.findMany({ where: and(eq(schema.findings.runId, previousRun.id), eq(schema.findings.ignored, false)) });
     previous = rows.map((f) => ({ checkId: f.checkId, pagePath: f.pagePath, subject: (f.data?.subject as string | undefined) ?? null }));
-    // Wrong claims from the last AI sample feed the content fixes (the AEO loop).
-    const answers = await db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, previousRun.id), columns: { prompt: true, engine: true, issues: true } });
+    // Wrong claims from the last AI answers check feed the content fixes (the
+    // AEO loop). The check runs monthly, so look back past audits without one.
+    const lastSampled = await db.query.aiAnswers.findFirst({ where: eq(schema.aiAnswers.siteId, site.id), orderBy: desc(schema.aiAnswers.createdAt), columns: { runId: true } });
+    const answers = lastSampled ? await db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, lastSampled.runId), columns: { prompt: true, engine: true, issues: true } }) : [];
     const seen = new Set<string>();
     for (const a of answers) {
       for (const issue of a.issues) {
@@ -180,6 +182,16 @@ export async function stepAiVisibility(env: RunEnv, runId: string): Promise<{ an
   if (!report) throw new Error("audit report missing");
   const emit = createEventSink(env, run.id);
   const usage = run.usage ?? emptyUsage();
+  // The audit's suggested questions are kept as candidates for the frozen set.
+  if (report.aiPrompts?.length) await db.update(schema.sites).set({ aiPromptCandidates: report.aiPrompts.slice(0, 15) }).where(eq(schema.sites.id, site.id));
+  const month = nowIso().slice(0, 7);
+  const skip = site.aiSampleEvery === "off" ? "The AI answers check is off for this site." : site.aiSampleEvery === "monthly" && site.aiSampledFor === month ? "AI answers are checked once a month; this month's check already ran." : null;
+  if (skip) {
+    await emit("status", skip);
+    await putJson(env.AUDIT_STORE, runKey(run.id, "ai-findings"), { findings: [] } satisfies ExtraFindings);
+    await putJson(env.AUDIT_STORE, runKey(run.id, "ai-summary"), { prompts: 0, answers: 0, mentioned: 0, cited: 0, recommended: 0, inaccuracies: 0, byEngine: {}, note: skip } satisfies RunSummary["aiVisibility"]);
+    return { answers: 0, mentioned: 0 };
+  }
   const prompts = site.aiPrompts?.length ? site.aiPrompts : report.aiPrompts;
   const out = await sampleAiVisibility({
     env,
@@ -212,6 +224,7 @@ export async function stepAiVisibility(env: RunEnv, runId: string): Promise<{ an
   await putJson(env.AUDIT_STORE, runKey(run.id, "ai-findings"), { findings: out.findings } satisfies ExtraFindings);
   await putJson(env.AUDIT_STORE, runKey(run.id, "ai-summary"), out.summary);
   await db.update(schema.runs).set({ usage }).where(eq(schema.runs.id, run.id));
+  if (out.summary.answers > 0) await db.update(schema.sites).set({ aiSampledFor: month }).where(eq(schema.sites.id, site.id));
   return { answers: out.summary.answers, mentioned: out.summary.mentioned };
 }
 

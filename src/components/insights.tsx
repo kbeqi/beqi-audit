@@ -73,11 +73,11 @@ export function AiVisibilityCard({ summary, answers, publicView = false, embedde
   return (
     <Wrap>
       <CardHeader
-        title="AI visibility (sampled)"
-        description={summary?.note ?? "During each audit, AI assistants are asked the questions a prospective customer would ask, and the answers are checked for the brand."}
+        title="AI answers check"
+        description={summary?.note ?? "Once a month, AI assistants are asked the questions a prospective customer would ask, and the answers are checked for the brand. A direction, not a score."}
       />
       {!summary || summary.answers === 0 ? (
-        <EmptyState title="No sample yet" body={summary?.note ?? "Runs with the next audit."} />
+        <EmptyState title={summary?.note?.startsWith("AI answers are checked once a month") ? "Checked monthly" : summary?.note?.startsWith("The AI answers check is off") ? "Check is off" : "No check yet"} body={summary?.note ?? "Runs with the next monthly check."} />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-4">

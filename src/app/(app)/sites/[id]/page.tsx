@@ -5,9 +5,9 @@ import { currentActorOrNull, isTeam } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
-import { FREQUENCY_LABELS, type AuditFrequency, type Severity } from "@/db/schema";
+import { AI_SAMPLE_LABELS, FREQUENCY_LABELS, type AiSampleEvery, type AuditFrequency, type Severity } from "@/db/schema";
 import { siteDetail } from "@/lib/queries";
-import { deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
+import { adoptAiPrompt, deleteIgnoreRule, runNow, updateSiteSettings } from "@/app/actions";
 import { CategorySections } from "@/components/category-sections";
 import { TopIssues } from "@/components/top-issues";
 import { SubmitButton } from "@/components/submit-button";
@@ -329,11 +329,24 @@ export default async function SitePage({ params, searchParams }: { params: Promi
               </span>
             </label>
             <div>
+              <label htmlFor="aiSampleEvery" className={labelCls}>
+                AI answers check
+              </label>
+              <select id="aiSampleEvery" name="aiSampleEvery" defaultValue={site.aiSampleEvery} className={inputCls}>
+                {(Object.keys(AI_SAMPLE_LABELS) as AiSampleEvery[]).map((k) => (
+                  <option key={k} value={k}>
+                    {AI_SAMPLE_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-ink-3">Monthly matches the report cadence and keeps the cost down; answers vary day to day, so more often adds noise, not signal.{site.aiSampledFor ? ` Last check: ${site.aiSampledFor}.` : ""}</p>
+            </div>
+            <div>
               <label htmlFor="aiPrompts" className={labelCls}>
-                Questions for the AI visibility sample (optional; one per line, up to 10)
+                Questions for the AI answers check (one per line, up to 15)
               </label>
               <textarea id="aiPrompts" name="aiPrompts" rows={4} defaultValue={site.aiPrompts?.join("\n") ?? ""} placeholder={"best Webflow agency in Tirana\nhow much does a Webflow site cost"} className={inputCls} />
-              <p className="mt-1 text-xs text-ink-3">What a prospective customer would ask an AI assistant. Empty means the audit writes its own questions from the site&apos;s content.</p>
+              <p className="mt-1 text-xs text-ink-3">The frozen set, agreed with the client, so month-to-month results compare like with like. Empty means the audit writes its own questions each time (noisier).</p>
             </div>
             <fieldset className="rounded-lg border border-line p-3">
               <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Google measurement</legend>
@@ -395,6 +408,28 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             <SubmitButton className={btnSecondary} pendingLabel="Saving…">Save settings</SubmitButton>
           </form>
 
+          {(site.aiPromptCandidates?.filter((c) => !(site.aiPrompts ?? []).includes(c)).length ?? 0) > 0 && (
+            <div className="border-t border-line p-5">
+              <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Questions suggested by the latest audit</h3>
+              <p className="mb-2 text-xs text-ink-3">Add the ones worth tracking to the set above; the set stays as it is otherwise.</p>
+              <ul className="space-y-1.5 text-sm">
+                {site.aiPromptCandidates!
+                  .filter((c) => !(site.aiPrompts ?? []).includes(c))
+                  .map((c) => (
+                    <li key={c} className="flex items-center justify-between gap-2">
+                      <span className="text-ink-2">“{c}”</span>
+                      <form action={adoptAiPrompt}>
+                        <input type="hidden" name="siteId" value={site.id} />
+                        <input type="hidden" name="prompt" value={c} />
+                        <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Adding…" disabled={(site.aiPrompts?.length ?? 0) >= 15}>
+                          Add
+                        </SubmitButton>
+                      </form>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
           {ignoreRules.length > 0 && (
             <div className="border-t border-line p-5">
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-3">Ignore rules</h3>

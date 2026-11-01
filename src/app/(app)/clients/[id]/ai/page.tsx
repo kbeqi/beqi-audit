@@ -47,9 +47,9 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
     <div className="space-y-6">
       <ClientNotices q={q} />
       <Card>
-        <CardHeader title="AI answers" description="During each audit, AI assistants (Perplexity and Claude) are asked the questions a prospective customer would ask. This page shows whether the brand is mentioned, cited or recommended, how that moves over time, and what is being changed on the site to improve it. It is a sample, not market share." />
+        <CardHeader title="AI answers check" description="Once a month, AI assistants (Perplexity and Claude) are asked a fixed set of questions a prospective customer would ask. This page shows which questions the brand is named in, cited for or recommended on, how that moves month to month, and what is being changed on the site in response. Answers vary from day to day: read this as a direction, not a score." />
         <p className="px-5 py-3 text-sm text-ink-2">
-          The loop: <span className="font-medium text-ink">ask</span> the questions → <span className="font-medium text-ink">check</span> the answers against the site&apos;s facts → <span className="font-medium text-ink">fix</span> the page that should answer (plain statements, schema, entity facts) → <span className="font-medium text-ink">ask again</span> at the next audit.
+          The loop: <span className="font-medium text-ink">ask</span> the same questions each month → <span className="font-medium text-ink">check</span> the answers against the site&apos;s facts → <span className="font-medium text-ink">fix</span> the page that should answer (plain statements, schema, entity facts) → <span className="font-medium text-ink">ask again</span> next month.
         </p>
       </Card>
 
@@ -72,13 +72,13 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
               </h2>
               {team && (
                 <Link href={`/sites/${site.id}#settings`} className="text-xs font-medium text-accent hover:underline">
-                  Edit the questions ({site.aiPrompts?.length ? `${site.aiPrompts.length} custom` : "audit's own"})
+                  {site.aiPrompts?.length ? `Question set: ${site.aiPrompts.length} fixed` : "No fixed question set yet: agree one"} · {site.aiSampleEvery === "monthly" ? "monthly" : site.aiSampleEvery === "audit" ? "every audit" : "off"}
                 </Link>
               )}
             </div>
             {!latest ? (
               <Card>
-                <EmptyState title="No AI sample yet" body="The sample runs with each audit; results appear here after the first one." />
+                <EmptyState title="No check yet" body="The check runs once a month with the audit; results appear here after the first one." />
               </Card>
             ) : (
               <>
@@ -92,9 +92,12 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
                       <div className="text-xs font-medium text-ink-3">{m.label}</div>
                       <div className="mt-1 flex items-end justify-between gap-3">
                         <div>
-                          <div className="text-2xl font-semibold leading-none text-ink num">{pct(m.now, latest.answers)}</div>
+                          <div className="text-2xl font-semibold leading-none text-ink num">
+                            {m.now}
+                            <span className="text-sm font-normal text-ink-3"> of {latest.answers}</span>
+                          </div>
                           <div className="mt-1 text-xs text-ink-3">
-                            {m.now} of {latest.answers} answers{runs.length > 1 ? ` · was ${pct(m.before, first.answers)} ${fmtDay(first.finishedAt)}` : ""}
+                            {pct(m.now, latest.answers)} of answers{runs.length > 1 ? ` · was ${m.before} of ${first.answers} in ${fmtDay(first.finishedAt)}` : ""}
                           </div>
                         </div>
                         {runs.length > 1 && <Trend runs={runs} pick={m.pick} label={`${m.label} over the last ${runs.length} audits`} />}
@@ -106,7 +109,7 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
                     <div className="mt-1 flex items-end justify-between gap-3">
                       <div>
                         <div className={`text-2xl font-semibold leading-none num ${latest.inaccuracies ? "text-serious-text" : "text-good-text"}`}>{latest.inaccuracies}</div>
-                        <div className="mt-1 text-xs text-ink-3">in the latest sample{runs.length > 1 ? ` · was ${first.inaccuracies}` : ""}</div>
+                        <div className="mt-1 text-xs text-ink-3">in the latest check{runs.length > 1 ? ` · was ${first.inaccuracies}` : ""}</div>
                       </div>
                       {runs.length > 1 && (
                         <div className="flex h-10 items-end gap-1" role="img" aria-label={`Inaccurate claims over the last ${runs.length} audits`}>
@@ -121,7 +124,7 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
                 </div>
 
                 <Card>
-                  <CardHeader title="Question by question" description={`Each cell: answers that mentioned the brand (cited in brackets), per audit, oldest to newest. ${runs.length} audit${runs.length === 1 ? "" : "s"} sampled.`} />
+                  <CardHeader title="Question by question" description={`The useful part: which questions name the brand. Each cell: answers that mentioned the brand (cited in brackets), per check, oldest to newest. ${runs.length} check${runs.length === 1 ? "" : "s"} so far.`} />
                   <div className="overflow-x-auto">
                     <table className="data-table w-full text-sm">
                       <thead>
@@ -170,7 +173,7 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
 
                 <div className="grid gap-6 lg:grid-cols-2">
                   <Card>
-                    <CardHeader title="What assistants get wrong" count={openClaims.length} description="Claims in the latest sample that contradict the site. The next audit proposes page text that states the correct fact." />
+                    <CardHeader title="What assistants get wrong" count={openClaims.length} description="Claims in the latest check that contradict the site. The next audit proposes page text that states the correct fact." />
                     {openClaims.length === 0 ? (
                       <EmptyState title="Nothing contradicted the site" />
                     ) : (

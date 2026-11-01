@@ -10,7 +10,7 @@ export const CATEGORY_LABELS: Record<CategoryKey, string> = {
   links: "Links",
   unused: "Unused CSS & scripts",
   naming: "Naming",
-  ai: "AI visibility",
+  ai: "AI answers check",
 };
 
 // One line per category, shown under the label so a reader knows what each
@@ -24,7 +24,7 @@ export const CATEGORY_HINTS: Record<CategoryKey, string> = {
   links: "Broken, misleading or dead links",
   unused: "Scripts and styles nothing uses",
   naming: "Class names a designer can work with",
-  ai: "Sampled AI answers, not scored",
+  ai: "A monthly sample of assistant answers; a direction, not a score",
 };
 
 // Plain-language names and hints for people outside the agency (the shared
@@ -38,7 +38,7 @@ export const CLIENT_LABELS: Record<CategoryKey, string> = {
   links: "Links",
   unused: "Unused code",
   naming: "Tidiness",
-  ai: "What AI assistants say",
+  ai: "AI answers check",
 };
 export const CLIENT_HINTS: Record<CategoryKey, string> = {
   seo: "How well search engines can read and list your pages",
@@ -49,7 +49,7 @@ export const CLIENT_HINTS: Record<CategoryKey, string> = {
   links: "Broken, misleading or dead links",
   unused: "Scripts and styles nothing uses",
   naming: "Class names a designer can work with",
-  ai: "A sample of assistant answers about you, not scored",
+  ai: "What assistants say about you, checked monthly; a direction, not a score",
 };
 
 // Every category, for grouping findings.

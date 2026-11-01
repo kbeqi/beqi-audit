@@ -141,7 +141,7 @@ export default async function ClientOverview({ params, searchParams }: { params:
               )}
               {latest.summary?.aiVisibility && latest.summary.aiVisibility.answers > 0 && (
                 <span>
-                  <span className="font-medium text-ink-2">AI answers (sample):</span> mentioned in {latest.summary.aiVisibility.mentioned} of {latest.summary.aiVisibility.answers}, site cited in {latest.summary.aiVisibility.cited}
+                  <span className="font-medium text-ink-2">AI answers check:</span> mentioned in {latest.summary.aiVisibility.mentioned} of {latest.summary.aiVisibility.answers}, site cited in {latest.summary.aiVisibility.cited}
                   {latest.summary.aiVisibility.inaccuracies ? `, ${latest.summary.aiVisibility.inaccuracies} inaccurate claim${latest.summary.aiVisibility.inaccuracies === 1 ? "" : "s"}` : ""}
                 </span>
               )}
