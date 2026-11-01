@@ -1,4 +1,4 @@
-import { requireSignedIn } from "@/app/gate";
+import { requireTeam } from "@/app/gate";
 import type { Metadata } from "next";
 import { createClient } from "@/app/actions";
 import { SubmitButton } from "@/components/submit-button";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Add client" };
 
 export default async function NewClientPage() {
-  await requireSignedIn("/clients/new");
+  await requireTeam("/clients/new");
   return (
     <div className="max-w-lg space-y-4">
       <Crumbs items={[{ href: "/clients", label: "Clients" }, { label: "Add client" }]} />

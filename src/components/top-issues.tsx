@@ -22,7 +22,7 @@ export function TopIssues({ findings, proposals = [], limit, readOnly = false, b
   const LABELS = client ? CLIENT_LABELS : CATEGORY_LABELS;
   const ranked = rankFindings(findings).slice(0, limit ?? (client ? 3 : 6));
   if (ranked.length === 0) return null;
-  const openProposal = (f: Finding) => proposals.find((p) => p.findingId === f.id && (p.status === "proposed" || p.status === "approved" || p.status === "applying"));
+  const openProposal = (f: Finding) => proposals.find((p) => p.findingId === f.id && (p.status === "proposed" || p.status === "client_approved" || p.status === "approved" || p.status === "applying"));
   return (
     <section aria-labelledby="top-issues" className="rounded-xl border border-line bg-surface">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-5 py-3.5">
@@ -61,7 +61,7 @@ export function TopIssues({ findings, proposals = [], limit, readOnly = false, b
               </div>
               {proposal && (
                 <Link href={`/fixes/${proposal.id}`} className="shrink-0 rounded-md px-2 py-1 text-xs font-medium tone-accent hover:brightness-95">
-                  {proposal.status === "proposed" ? "Review the fix" : proposal.status === "applying" ? "Being applied…" : "Fix approved"}
+                  {proposal.status === "proposed" ? (client ? "Approve the fix" : "Review the fix") : proposal.status === "applying" ? "Being applied…" : proposal.status === "client_approved" ? "Approved · Beqi applies next" : "Fix approved"}
                 </Link>
               )}
               {!proposal && !readOnly && f.pagePath && (

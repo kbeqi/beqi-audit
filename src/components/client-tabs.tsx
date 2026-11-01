@@ -11,8 +11,8 @@ export interface ClientTabCounts {
 }
 
 // Section navigation inside one client. The active tab is marked for both
-// sighted users and assistive tech (aria-current).
-export function ClientTabs({ clientId, counts }: { clientId: string; counts: ClientTabCounts }) {
+// sighted users and assistive tech (aria-current). Settings is team-only.
+export function ClientTabs({ clientId, counts, showSettings = true }: { clientId: string; counts: ClientTabCounts; showSettings?: boolean }) {
   const pathname = usePathname() ?? "";
   const base = `/clients/${clientId}`;
   const tabs = [
@@ -20,7 +20,7 @@ export function ClientTabs({ clientId, counts }: { clientId: string; counts: Cli
     { href: `${base}/audits`, label: "Audits", badge: counts.running ? "live" : counts.audits || undefined, live: counts.running },
     { href: `${base}/fixes`, label: "Fixes", badge: counts.pendingFixes || undefined, warn: counts.pendingFixes > 0 },
     { href: `${base}/sites`, label: "Sites", badge: counts.sites || undefined },
-    { href: `${base}/settings`, label: "Settings" },
+    ...(showSettings ? [{ href: `${base}/settings`, label: "Settings" }] : []),
   ];
   return (
     <nav aria-label="Client sections" className="-mb-px flex gap-1 overflow-x-auto border-b border-line">

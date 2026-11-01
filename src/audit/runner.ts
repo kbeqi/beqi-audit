@@ -282,7 +282,7 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
   // same fix on the next run must not create duplicates.
   const byIndex = new Map(unique.map((f) => [f.index, f]));
   const openProposals = await db.query.fixProposals.findMany({
-    where: and(eq(schema.fixProposals.siteId, site.id), inArray(schema.fixProposals.status, ["proposed", "approved", "applying"])),
+    where: and(eq(schema.fixProposals.siteId, site.id), inArray(schema.fixProposals.status, ["proposed", "client_approved", "approved", "applying"])),
   });
   const openKeys = new Set(openProposals.map((p) => `${p.fingerprint}|${p.action}`));
   let proposals = 0;

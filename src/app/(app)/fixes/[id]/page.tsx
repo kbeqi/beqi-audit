@@ -1,6 +1,6 @@
 import Link from "next/link";
-import { requireSignedIn } from "@/app/gate";
-import { currentActorOrNull } from "@/lib/auth";
+import { canSeeClient, requireSignedIn } from "@/app/gate";
+import { currentActorOrNull, isTeam } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { proposalDetail } from "@/lib/queries";
 import { LiveLog } from "@/components/live-log";
@@ -15,15 +15,18 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   if (!(await currentActorOrNull())) return { title: "Sign in" };
   const data = await proposalDetail(id);
-  return { title: data ? `${data.proposal.title ?? actionLabel(data.proposal.action)} · ${data.site.name}` : "Fix" };
+  if (!data || !(await canSeeClient(data.site.clientId))) return { title: "Fix" };
+  return { title: `${data.proposal.title ?? actionLabel(data.proposal.action)} · ${data.site.name}` };
 }
 
 export default async function FixPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await requireSignedIn(`/fixes/${id}`);
+  const actor = await requireSignedIn(`/fixes/${id}`);
   const data = await proposalDetail(id);
   if (!data) notFound();
   const { proposal, site, client, finding, events } = data;
+  const team = isTeam(actor);
+  if (!team && site.clientId !== actor.clientId) notFound();
   const clientName = client?.name ?? "Client";
   const live = proposal.status === "applying";
   const changes = proposal.proposal?.changes ?? [];
@@ -31,7 +34,7 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
 
   return (
     <div className="space-y-6">
-      <Crumbs items={[{ href: "/clients", label: "Clients" }, { href: `/clients/${site.clientId}`, label: clientName }, { href: `/clients/${site.clientId}/fixes`, label: "Fixes" }, { label: proposal.title ?? actionLabel(proposal.action) }]} />
+      <Crumbs items={[...(team ? [{ href: "/clients", label: "Clients" }] : []), { href: `/clients/${site.clientId}`, label: clientName }, { href: `/clients/${site.clientId}/fixes`, label: "Fixes" }, { label: proposal.title ?? actionLabel(proposal.action) }]} />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-2">
@@ -51,7 +54,7 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
             hostOf(site.baseUrl)
           )
         }
-        actions={<DecisionButtons proposal={proposal} back={`/clients/${site.clientId}/fixes`} />}
+        actions={<DecisionButtons proposal={proposal} back={`/clients/${site.clientId}/fixes`} role={team ? "team" : "client"} />}
       />
 
       {proposal.status === "applied" && proposal.result && (
@@ -67,24 +70,28 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
       )}
       {proposal.status === "resolved" && (
         <Notice tone="good">
-          Fixed manually by {proposal.appliedBy ?? "a team member"} on {fmtDate(proposal.appliedAt)}. Nothing was written by Claude; the next audit confirms the issue is gone, and reopens it if not.
+          Fixed by hand{team ? ` by ${proposal.appliedBy ?? "a team member"}` : " by Beqi"} on {fmtDate(proposal.appliedAt)}. The next audit confirms the issue is gone, and reopens it if not.
         </Notice>
       )}
-      {proposal.status === "failed" && (
-        <Notice tone="critical">
-          <strong>Not applied.</strong> {proposal.error ?? "Unknown error."}
-          {proposal.action === "image_compress" ? " Retrying the same conversion will fail again; resize or re-export the image in Webflow instead." : " You can retry, or reject it."}
-        </Notice>
-      )}
+      {proposal.status === "failed" &&
+        (team ? (
+          <Notice tone="critical">
+            <strong>Not applied.</strong> {proposal.error ?? "Unknown error."}
+            {proposal.action === "image_compress" ? " Retrying the same conversion will fail again; resize or re-export the image in Webflow instead." : " You can retry, or reject it."}
+          </Notice>
+        ) : (
+          <Notice tone="warn">This change could not be applied automatically. Beqi is looking into it.</Notice>
+        ))}
+      {proposal.status === "client_approved" && <Notice tone="good">Approved{team ? ` by ${proposal.approvedBy ?? "the client"}` : ""}. Beqi applies this change next and the result appears here.</Notice>}
       {proposal.status === "approved" && proposal.result?.status === "skipped" && (
         <Notice tone="warn">Skipped: {proposal.result.summary} Review the current value, then approve again if it still applies.</Notice>
       )}
-      {live && <Notice tone="accent">Claude is applying this change and will read it back to verify.</Notice>}
+      {live && <Notice tone="accent">{team ? "Claude is applying this change and will read it back to verify." : "This change is being applied and checked."}</Notice>}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
         <div className="space-y-6">
           <Card>
-            <CardHeader title="Proposed change" description="What Claude will write (− current, + new)" />
+            <CardHeader title="Proposed change" description={team ? "What Claude will write (− current, + new)" : "What changes on the site (− current, + new)"} />
             <div className="p-5">
               {changes.length ? <ChangeDiff changes={changes} /> : <p className="text-sm text-ink-3">No field-level changes recorded.</p>}
               {proposal.rationale && (
@@ -102,7 +109,7 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
             </div>
           </Card>
 
-          {(events.length > 0 || live) && (
+          {team && (events.length > 0 || live) && (
             <Card>
               <CardHeader title="Agent activity" description={live ? "Live" : `${events.length} events`} />
               <LiveLog streamId={proposal.id} initial={events} live={live} />
@@ -126,7 +133,7 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
               <div className="space-y-2 p-5 text-sm">
                 <div className="flex items-center gap-2">
                   <SeverityPill severity={finding.severity} />
-                  <span className="font-mono text-xs text-ink-3">{finding.checkId}</span>
+                  {team && <span className="font-mono text-xs text-ink-3">{finding.checkId}</span>}
                 </div>
                 <div className="font-medium text-ink">{finding.title}</div>
                 {finding.detail && <p className="text-ink-2">{finding.detail}</p>}
@@ -143,11 +150,15 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
                 items={[
                   { k: "Proposed", v: fmtDate(proposal.createdAt) },
                   { k: "Approved by", v: proposal.approvedBy ?? "—" },
-                  { k: "Applied", v: proposal.appliedAt ? `${fmtDate(proposal.appliedAt)} by ${proposal.appliedBy ?? "—"}` : "—" },
-                  { k: "Page id", v: <span className="font-mono text-xs">{target?.pageId ?? "—"}</span> },
-                  ...(target?.assetId ? [{ k: "Asset id", v: <span className="font-mono text-xs">{target.assetId}</span> }] : []),
-                  ...(target?.elementId ? [{ k: "Element id", v: <span className="font-mono text-xs">{target.elementId}</span> }] : []),
-                  ...(target?.scriptId ? [{ k: "Script id", v: <span className="font-mono text-xs">{target.scriptId}</span> }] : []),
+                  { k: "Applied", v: proposal.appliedAt ? `${fmtDate(proposal.appliedAt)}${team ? ` by ${proposal.appliedBy ?? "—"}` : ""}` : "—" },
+                  ...(team
+                    ? [
+                        { k: "Page id", v: <span className="font-mono text-xs">{target?.pageId ?? "—"}</span> },
+                        ...(target?.assetId ? [{ k: "Asset id", v: <span className="font-mono text-xs">{target.assetId}</span> }] : []),
+                        ...(target?.elementId ? [{ k: "Element id", v: <span className="font-mono text-xs">{target.elementId}</span> }] : []),
+                        ...(target?.scriptId ? [{ k: "Script id", v: <span className="font-mono text-xs">{target.scriptId}</span> }] : []),
+                      ]
+                    : []),
                 ]}
               />
             </div>

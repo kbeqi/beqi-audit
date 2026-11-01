@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { requireSignedIn } from "@/app/gate";
-import { currentActorOrNull } from "@/lib/auth";
+import { canSeeClient, requireSignedIn } from "@/app/gate";
+import { currentActorOrNull, isTeam } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
@@ -26,17 +26,21 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   if (!(await currentActorOrNull())) return { title: "Sign in" };
   const db = await getDb();
   const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, id), columns: { siteId: true, status: true } });
-  const site = run ? await db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId), columns: { name: true } }) : null;
-  return { title: site ? `Audit · ${site.name}${run?.status === "running" ? " (running)" : ""}` : "Audit" };
+  const site = run ? await db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId), columns: { name: true, clientId: true } }) : null;
+  if (!site || !(await canSeeClient(site.clientId))) return { title: "Audit" };
+  return { title: `Audit · ${site.name}${run?.status === "running" ? " (running)" : ""}` };
 }
 
 export default async function RunPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ shared?: string; unshared?: string; error?: string }> }) {
   const { id } = await params;
   const { shared, unshared, error } = await searchParams;
-  await requireSignedIn(`/runs/${id}`);
+  const actor = await requireSignedIn(`/runs/${id}`);
   const data = await runDetail(id);
   if (!data) notFound();
   const { run, site, client, findings, stateByFp, proposals, events, metrics, aiAnswers, recentDurations } = data;
+  const team = isTeam(actor);
+  if (!team && site.clientId !== actor.clientId) notFound();
+  const role = team ? "team" : "client";
   const live = run.status === "queued" || run.status === "running";
   const regressions = run.summary?.regressions;
   const visible = findings.filter((f) => {
@@ -45,7 +49,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   });
   const newFps = new Set(findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === run.id).map((f) => f.fingerprint));
   const sevTotal = run.summary ? Object.values(run.summary.findingsBySeverity).reduce((a, b) => a + b, 0) : 0;
-  const openProposals = proposals.filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying");
+  const openProposals = proposals.filter((p) => (team ? p.status === "proposed" || p.status === "client_approved" || p.status === "approved" || p.status === "applying" : p.status === "proposed"));
   const env = await getEnv();
   const shareUrl = run.shareToken ? `${appUrl(env)}/share/${run.shareToken}` : null;
 
@@ -87,6 +91,13 @@ export default async function RunPage({ params, searchParams }: { params: Promis
           )}
         </Card>
   );
+  // Clients get the progress bar and estimate, not the raw agent log.
+  const progressCard = (
+      <Card>
+        <CardHeader title="Audit in progress" description="The time estimate comes from this site's previous audits and the pages read so far." />
+        <RunMonitor streamId={run.id} initial={events} live={live} compact={!live} startedAt={run.startedAt ?? run.createdAt} pageBudget={Math.min(site.maxPages, 40)} recentDurations={recentDurations} hideLog />
+      </Card>
+  );
   const activityCard = (
       <Card>
         <CardHeader title={live ? "Audit in progress" : "Agent activity"} description={live ? "The time estimate comes from this site's previous audits and the pages read so far." : `${events.length} events`} />
@@ -95,36 +106,40 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   );
   return (
     <div className="space-y-6">
-      <Crumbs items={[{ href: "/clients", label: "Clients" }, ...(client ? [{ href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/audits`, label: "Audits" }] : []), { label: `${site.name} · ${fmtDate(run.createdAt)}` }]} />
+      <Crumbs items={[...(team ? [{ href: "/clients", label: "Clients" }] : []), ...(client ? [{ href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/audits`, label: "Audits" }] : []), { label: `${site.name} · ${fmtDate(run.createdAt)}` }]} />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-2">
             <StatusPill status={run.status} />
             <span>{triggerLabel(run.trigger)} audit</span>
-            {run.model && <span className="font-mono">{run.model}</span>}
+            {team && run.model && <span className="font-mono">{run.model}</span>}
           </span>
         }
         title={site.name}
-        description={run.finishedAt ? `Finished ${fmtDate(run.finishedAt)} · ${fmtDuration(run.usage?.durationMs)}` : `Started ${fmtDate(run.startedAt ?? run.createdAt)}`}
+        description={run.finishedAt ? `Finished ${fmtDate(run.finishedAt)}${team ? ` · ${fmtDuration(run.usage?.durationMs)}` : ""}` : `Started ${fmtDate(run.startedAt ?? run.createdAt)}`}
         actions={run.status === "complete" ? <ScoreRing score={run.scoreOverall} size="lg" /> : undefined}
       />
 
-      {run.error && (
-        <Notice tone="critical">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="min-w-0 break-words">Audit failed: {run.error}</span>
-            <form action={runNow}>
-              <input type="hidden" name="siteId" value={site.id} />
-              <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Starting…">Run again</SubmitButton>
-            </form>
-          </div>
-        </Notice>
-      )}
+      {run.error &&
+        (team ? (
+          <Notice tone="critical">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="min-w-0 break-words">Audit failed: {run.error}</span>
+              <form action={runNow}>
+                <input type="hidden" name="siteId" value={site.id} />
+                <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Starting…">Run again</SubmitButton>
+              </form>
+            </div>
+          </Notice>
+        ) : (
+          <Notice tone="warn">This audit did not complete. Beqi has been notified and will run it again.</Notice>
+        ))}
       {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
       {unshared && <Notice tone="good">Sharing stopped. The old link no longer works.</Notice>}
       {live && (
         <Notice tone="accent">
-          {run.trigger === "publish" ? "The site was just published, so Claude is checking it again. " : ""}Claude is auditing the site through Webflow&apos;s MCP server and the live URL — reading only, nothing is changed. Audits usually take 5–10 minutes; this page updates as it works, and you can leave and come back.
+          {run.trigger === "publish" ? "The site was just published, so it is being checked again. " : ""}
+          {team ? "Claude is auditing the site through Webflow's MCP server and the live URL — reading only, nothing is changed." : "Beqi's audit is reading the site — nothing on it is changed."} Audits usually take 5–10 minutes; this page updates as it works, and you can leave and come back.
         </Notice>
       )}
       {run.status === "complete" && run.trigger === "publish" && regressions && (
@@ -137,7 +152,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         </Notice>
       )}
 
-      {live && activityCard}
+      {live && (team ? activityCard : progressCard)}
 
       {run.status === "complete" && run.summary && (
         <>
@@ -145,7 +160,11 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             <StatTile label="Pages reviewed" value={<span className="num">{run.summary.pagesReviewed}</span>} hint={`of ${run.summary.pagesTotal} static pages`} />
             <StatTile label="Findings" value={<span className="num">{sevTotal}</span>} hint={`${run.summary.findingsBySeverity.critical} critical · ${run.summary.findingsBySeverity.high} high · ${run.summary.findingsBySeverity.medium} medium`} />
             <StatTile label="Changes since last audit" value={<span className="num">{run.summary.newFindings}</span>} hint={`new · ${run.summary.resolvedFindings} resolved`} />
-            <StatTile label="Cost" value={fmtCost(run.usage?.estimatedCostUsd)} hint={run.usage ? `${fmtNumber(run.usage.inputTokens + run.usage.cacheReadTokens)} in · ${fmtNumber(run.usage.outputTokens)} out · ${run.usage.toolCalls} tool calls` : undefined} />
+            {team ? (
+              <StatTile label="Cost" value={fmtCost(run.usage?.estimatedCostUsd)} hint={run.usage ? `${fmtNumber(run.usage.inputTokens + run.usage.cacheReadTokens)} in · ${fmtNumber(run.usage.outputTokens)} out · ${run.usage.toolCalls} tool calls` : undefined} />
+            ) : (
+              <StatTile label="Fixes recommended" value={<span className="num">{proposals.length}</span>} hint={openProposals.length ? `${openProposals.length} waiting for your approval` : "none waiting"} />
+            )}
           </div>
 
           {run.agentSummary && (
@@ -172,7 +191,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             </Card>
           )}
 
-          <TopIssues findings={visible} proposals={proposals} baseUrl={site.baseUrl} />
+          <TopIssues findings={visible} proposals={proposals} baseUrl={site.baseUrl} audience={team ? "team" : "client"} />
 
           <CategorySections
             scores={run.scores}
@@ -182,20 +201,22 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             back={`/runs/${run.id}`}
             proposals={proposals}
             newFingerprints={newFps}
-            showIgnored
+            showIgnored={team}
+            readOnly={!team}
+            audience={team ? "team" : "client"}
             aiSummary={run.summary.aiVisibility}
             extras={{
               performance: <PerformanceCard metrics={metrics} unavailable={run.summary.perf?.unavailable} embedded />,
-              ai: <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} embedded />,
+              ai: <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} publicView={!team} embedded />,
             }}
           />
 
           {openProposals.length > 0 && (
             <Card>
-              <CardHeader title="Fixes proposed in this audit" count={openProposals.length} />
+              <CardHeader title={team ? "Fixes proposed in this audit" : "Fixes waiting for your approval"} count={openProposals.length} />
               <ul className="divide-y divide-line">
                 {openProposals.map((p) => (
-                  <ProposalRow key={p.id} proposal={p} back={`/runs/${run.id}`} />
+                  <ProposalRow key={p.id} proposal={p} back={`/runs/${run.id}`} role={role} />
                 ))}
               </ul>
             </Card>
@@ -204,9 +225,10 @@ export default async function RunPage({ params, searchParams }: { params: Promis
         </>
       )}
 
-      {!live && shareCard}
-      {!live && activityCard}
+      {team && !live && shareCard}
+      {team && !live && activityCard}
 
+      {team && (
       <Card>
         <CardHeader title="Run details" />
         <div className="p-5">
@@ -222,6 +244,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
           />
         </div>
       </Card>
+      )}
     </div>
   );
 }

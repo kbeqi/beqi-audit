@@ -78,12 +78,42 @@ export function ChangeDiff({ changes }: { changes: { field: string; from: string
 
 // Two decisions: apply (Claude writes it now) or reject. "Approve for later"
 // was a dead end, since nothing applies approved rows on its own.
-export function DecisionButtons({ proposal, back, size = "md" }: { proposal: FixProposal; back: string; size?: "sm" | "md" }) {
+// Clients can apply low-risk changes themselves; anything riskier they sign off
+// and Beqi applies. The team sees every decision, including "client approved".
+export function clientCanApply(proposal: FixProposal): boolean {
+  return proposal.risk === "low" && proposal.action !== "image_compress";
+}
+
+export function DecisionButtons({ proposal, back, size = "md", role = "team" }: { proposal: FixProposal; back: string; size?: "sm" | "md"; role?: "team" | "client" }) {
   const sm = size === "sm" ? btnSm : "";
-  const reviewable = proposal.status === "proposed" || proposal.status === "approved" || proposal.status === "failed";
+  const reviewable = proposal.status === "proposed" || proposal.status === "client_approved" || proposal.status === "approved" || proposal.status === "failed";
   if (!reviewable) return null;
+  if (role === "client") {
+    if (proposal.status !== "proposed") return <span className="text-xs text-ink-3">{proposal.status === "client_approved" ? "Approved · Beqi applies this next" : proposal.status === "failed" ? "Beqi is looking into this" : "Approved"}</span>;
+    const self = clientCanApply(proposal);
+    return (
+      <div className="flex flex-wrap gap-2">
+        <form action={decideProposal}>
+          <input type="hidden" name="proposalId" value={proposal.id} />
+          <input type="hidden" name="decision" value={self ? "apply" : "client_approve"} />
+          <input type="hidden" name="back" value={back} />
+          <SubmitButton className={`${btnPrimary} ${sm}`} pendingLabel="Saving…" title={self ? "Claude applies this change in Webflow now" : "Beqi applies this change after your approval"}>
+            {self ? "Approve & apply" : "Approve for Beqi to apply"}
+          </SubmitButton>
+        </form>
+        <form action={decideProposal}>
+          <input type="hidden" name="proposalId" value={proposal.id} />
+          <input type="hidden" name="decision" value="reject" />
+          <input type="hidden" name="back" value={back} />
+          <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Saving…" title="Don't make this change">
+            Decline
+          </SubmitButton>
+        </form>
+      </div>
+    );
+  }
   const risky = proposal.risk === "high" || proposal.action === "image_compress";
-  const applyLabel = proposal.status === "failed" ? "Retry" : "Approve & apply";
+  const applyLabel = proposal.status === "failed" ? "Retry" : proposal.status === "client_approved" ? "Apply (client approved)" : "Approve & apply";
   return (
     <div className="flex flex-wrap gap-2">
       <form action={decideProposal}>
@@ -125,7 +155,7 @@ export function DecisionButtons({ proposal, back, size = "md" }: { proposal: Fix
 
 // A proposal in a list: enough to decide without opening it. `compact` (narrow
 // columns) drops the diff and stacks the buttons under the text.
-export function ProposalRow({ proposal, site, back, compact = false }: { proposal: FixProposal; site?: Site; back: string; compact?: boolean }) {
+export function ProposalRow({ proposal, site, back, compact = false, role = "team" }: { proposal: FixProposal; site?: Site; back: string; compact?: boolean; role?: "team" | "client" }) {
   const changes = proposal.proposal?.changes ?? [];
   return (
     <li className="px-5 py-4">
@@ -168,7 +198,7 @@ export function ProposalRow({ proposal, site, back, compact = false }: { proposa
           {proposal.error && <p className="mt-1.5 text-xs text-critical-text">{proposal.error}</p>}
         </div>
         <div className={`shrink-0 ${compact ? "basis-full" : ""}`}>
-          <DecisionButtons proposal={proposal} back={back} size="sm" />
+          <DecisionButtons proposal={proposal} back={back} size="sm" role={role} />
         </div>
       </div>
     </li>

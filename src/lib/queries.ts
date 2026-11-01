@@ -21,7 +21,7 @@ export interface ClientCard {
   connected: boolean;
 }
 
-const OPEN_PROPOSAL_STATUSES = ["proposed", "approved", "applying"] as const;
+const OPEN_PROPOSAL_STATUSES = ["proposed", "client_approved", "approved", "applying"] as const;
 const SUPPRESSED = new Set(["ignored", "false_positive", "fixed"]);
 
 // Small helper for D1's bound-parameter cap.
@@ -296,8 +296,20 @@ export async function pendingFixesAcrossPortfolio(): Promise<(FixProposal & { si
   return withSites(rows);
 }
 
-export async function pendingFixCount(): Promise<number> {
+// Open proposals across the portfolio, or, for a client user, the ones
+// waiting for that client's decision.
+export async function pendingFixCount(clientId: string | null = null): Promise<number> {
   const db = await getDb();
+  if (clientId) {
+    const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, clientId), columns: { id: true } });
+    if (!sites.length) return 0;
+    const rows = await chunked(
+      sites.map((s) => s.id),
+      60,
+      (ids) => db.query.fixProposals.findMany({ where: and(inArray(schema.fixProposals.siteId, ids), eq(schema.fixProposals.status, "proposed")), columns: { id: true } }),
+    );
+    return rows.length;
+  }
   const rows = await db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.status, [...OPEN_PROPOSAL_STATUSES]), columns: { id: true } });
   return rows.length;
 }

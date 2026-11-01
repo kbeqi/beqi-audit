@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { canSeeClient, requireTeam } from "@/app/gate";
 import { clientDetail } from "@/lib/queries";
 import { deleteClient, disconnectWorkspace, reimportSites, removeClientLogo, sendTestEmail, updateClient, uploadClientLogo } from "@/app/actions";
 import { emailConfigured } from "@/lib/email";
@@ -13,12 +14,14 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  if (!(await canSeeClient(id))) return { title: "Settings" };
   const data = await clientDetail(id);
   return { title: data ? `${data.client.name} · Settings` : "Settings" };
 }
 
 export default async function ClientSettings({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch> }) {
   const { id } = await params;
+  await requireTeam(`/clients/${id}/settings`);
   const q = await searchParams;
   const mailReady = emailConfigured(await getEnv());
   const data = await clientDetail(id);
@@ -50,6 +53,24 @@ export default async function ClientSettings({ params, searchParams }: { params:
                 <textarea id="notes" name="notes" rows={3} defaultValue={client.notes ?? ""} className={inputCls} />
               </div>
               <fieldset className="rounded-lg border border-line p-3">
+                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Beqi lead</legend>
+                <p className="mb-2 text-xs text-ink-3">The person at Beqi this client talks to. Shown in their hub and in emails they get from the app.</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="leadName" className={labelCls}>
+                      Name
+                    </label>
+                    <input id="leadName" name="leadName" defaultValue={client.leadName ?? ""} className={inputCls} placeholder="Kreshnik" />
+                  </div>
+                  <div>
+                    <label htmlFor="leadEmail" className={labelCls}>
+                      Email
+                    </label>
+                    <input id="leadEmail" name="leadEmail" type="email" defaultValue={client.leadEmail ?? ""} className={inputCls} placeholder="name@beqi.co" />
+                  </div>
+                </div>
+              </fieldset>
+              <fieldset className="rounded-lg border border-line p-3">
                 <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Email notifications</legend>
                 <div>
                   <label htmlFor="notifyEmail" className={labelCls}>
@@ -73,6 +94,14 @@ export default async function ClientSettings({ params, searchParams }: { params:
                   </span>
                 </label>
                 {!mailReady && <p className="mt-3 rounded-md px-2 py-1.5 text-xs tone-warn">Email sending isn&apos;t configured yet (RESEND_API_KEY / EMAIL_FROM). Settings are saved and used once it is.</p>}
+              </fieldset>
+              <fieldset className="rounded-lg border border-line p-3">
+                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-3">Slack</legend>
+                <label htmlFor="slackWebhookUrl" className={labelCls}>
+                  Incoming webhook URL
+                </label>
+                <input id="slackWebhookUrl" name="slackWebhookUrl" type="url" defaultValue={client.slackWebhookUrl ?? ""} className={inputCls} placeholder="https://hooks.slack.com/services/…" />
+                <p className="mt-1 text-xs text-ink-3">Audit results and applied fixes are posted to this channel (the client&apos;s shared channel, or an internal one). Leave empty for none.</p>
               </fieldset>
               <SubmitButton className={btnPrimary} pendingLabel="Saving…">
                 Save changes
@@ -174,6 +203,13 @@ export default async function ClientSettings({ params, searchParams }: { params:
                 ))}
               </ul>
             )}
+          </Card>
+
+          <Card>
+            <CardHeader title="Client sign-in" description="People at the client who can open this hub" />
+            <p className="p-5 text-sm text-ink-2">
+              Add them on the Team page with the role <span className="font-medium text-ink">Client</span> and pick this client. They sign in with an email link, see this hub only, and can approve fixes: low-risk ones are applied straight away, the rest wait for Beqi.
+            </p>
           </Card>
 
           <Card>

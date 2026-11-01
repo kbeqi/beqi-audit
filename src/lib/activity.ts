@@ -22,6 +22,7 @@ const LABELS: Record<string, string> = {
   "ignore_rule.created": "Ignore rule added",
   "finding.state_changed": "Finding status changed",
   "fix.approved": "Fix approved",
+  "fix.client_approved": "Fix approved by the client; Beqi applies it",
   "fix.rejected": "Fix rejected",
   "fix.resolved_manually": "Fix marked as done by hand",
   "fix.apply_started": "Fix application started",

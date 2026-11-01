@@ -52,16 +52,19 @@ export async function addUser(formData: FormData) {
   const admin = await requireAdmin();
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const name = String(formData.get("name") ?? "").trim() || null;
-  const role = (String(formData.get("role") ?? "member") === "admin" ? "admin" : "member") as UserRole;
+  const roleRaw = String(formData.get("role") ?? "member");
+  const role = (roleRaw === "admin" ? "admin" : roleRaw === "client" ? "client" : "member") as UserRole;
+  const clientId = role === "client" ? String(formData.get("clientId") ?? "").trim() || null : null;
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) redirect(`/team?error=${encodeURIComponent("Enter a valid email address.")}`);
+  if (role === "client" && !clientId) redirect(`/team?error=${encodeURIComponent("Choose which client this person belongs to.")}`);
   const db = await getDb();
   const existing = await db.query.users.findFirst({ where: eq(schema.users.email, email) });
   if (existing) {
-    await db.update(schema.users).set({ disabledAt: null, role, name: name ?? existing.name }).where(eq(schema.users.id, existing.id));
+    await db.update(schema.users).set({ disabledAt: null, role, clientId, name: name ?? existing.name }).where(eq(schema.users.id, existing.id));
   } else {
-    await db.insert(schema.users).values({ id: newId(), email, name, role, invitedBy: admin.email });
+    await db.insert(schema.users).values({ id: newId(), email, name, role, clientId, invitedBy: admin.email });
   }
-  await log(admin.email, "team.user_added", { email, role });
+  await log(admin.email, "team.user_added", { email, role, clientId });
   revalidatePath("/team");
   redirect(`/team?notice=${encodeURIComponent(`${email} can now sign in as ${role}.`)}`);
 }

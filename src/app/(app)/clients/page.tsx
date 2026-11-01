@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { requireSignedIn } from "@/app/gate";
+import { requireTeam } from "@/app/gate";
 import { dashboardData } from "@/lib/queries";
 import { Card, CardHeader, EmptyState, Notice, PageHeader, ScoreRing, btnPrimary, hostOf } from "@/components/ui";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Clients" };
 
 export default async function ClientsPage({ searchParams }: { searchParams: Promise<{ deleted?: string }> }) {
-  await requireSignedIn("/clients");
+  await requireTeam("/clients");
   const { deleted } = await searchParams;
   const clients = await dashboardData();
   return (

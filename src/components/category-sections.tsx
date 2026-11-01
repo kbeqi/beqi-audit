@@ -23,6 +23,7 @@ export function CategorySections({
   aiSummary,
   extras,
   audience = "team",
+  hideProposalLinks = false,
 }: {
   scores: CategoryScores | null | undefined;
   previousScores?: CategoryScores | null;
@@ -39,6 +40,7 @@ export function CategorySections({
   extras?: Partial<Record<CategoryKey, React.ReactNode>>;
   // "client": plain-language area names (the shared report).
   audience?: "team" | "client";
+  hideProposalLinks?: boolean;
 }) {
   const LABELS = audience === "client" ? CLIENT_LABELS : CATEGORY_LABELS;
   const HINTS = audience === "client" ? CLIENT_HINTS : CATEGORY_HINTS;
@@ -82,7 +84,7 @@ export function CategorySections({
             {list.length === 0 ? (
               <p className="px-5 py-3 text-sm text-ink-3">{cat === "conversion" && score === undefined ? "New area: scored from the next audit." : "No issues found in this area."}</p>
             ) : (
-              <FindingsList findings={list} category={cat} siteId={siteId} baseUrl={baseUrl} back={back} proposals={proposals} newFingerprints={newFingerprints} showIgnored={showIgnored} readOnly={readOnly} />
+              <FindingsList findings={list} category={cat} siteId={siteId} baseUrl={baseUrl} back={back} proposals={proposals} newFingerprints={newFingerprints} showIgnored={showIgnored} readOnly={readOnly} hideProposalLinks={hideProposalLinks} />
             )}
           </section>
         );

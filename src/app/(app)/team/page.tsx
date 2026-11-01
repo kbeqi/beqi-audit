@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { desc } from "drizzle-orm";
-import { redirect } from "next/navigation";
+import { asc, desc } from "drizzle-orm";
+import Link from "next/link";
 import { getDb, schema } from "@/db";
+import { requireTeam } from "@/app/gate";
 import { addUser, removeUser, setUserRole, signOutEverywhere } from "@/app/auth-actions";
-import { adminEmails, currentActorOrNull } from "@/lib/auth";
+import { adminEmails } from "@/lib/auth";
 import { emailConfigured } from "@/lib/email";
 import { getEnv } from "@/lib/env";
 import { SubmitButton } from "@/components/submit-button";
@@ -14,20 +15,21 @@ export const metadata: Metadata = { title: "Team" };
 
 export default async function TeamPage({ searchParams }: { searchParams: Promise<{ notice?: string; error?: string }> }) {
   const { notice, error } = await searchParams;
-  const actor = await currentActorOrNull();
-  if (!actor) redirect("/login?next=/team");
+  const actor = await requireTeam("/team");
   const env = await getEnv();
   const db = await getDb();
-  const users = await db.query.users.findMany({ orderBy: desc(schema.users.createdAt) });
+  const [users, clients] = await Promise.all([db.query.users.findMany({ orderBy: desc(schema.users.createdAt) }), db.query.clients.findMany({ orderBy: asc(schema.clients.name), columns: { id: true, name: true } })]);
+  const clientName = (id: string | null) => (id ? (clients.find((c) => c.id === id)?.name ?? "unknown client") : null);
   const configured = adminEmails(env);
-  const active = users.filter((u) => !u.disabledAt);
+  const active = users.filter((u) => !u.disabledAt && u.role !== "client");
+  const clientUsers = users.filter((u) => !u.disabledAt && u.role === "client");
   const removed = users.filter((u) => u.disabledAt);
   const isAdmin = actor.role === "admin";
   const mailReady = emailConfigured(env);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Team" description="Who can sign in to Beqi Audit. Members see and do everything except manage the team." />
+      <PageHeader title="Team" description="Who can sign in to Beqi Audit. Members see and do everything except manage the team; client users see only their own hub." />
       {notice && <Notice tone="good">{decodeURIComponent(notice)}</Notice>}
       {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
       {!mailReady && <Notice tone="warn">Sign-in links are sent by email and email isn&apos;t configured (RESEND_API_KEY / EMAIL_FROM). Nobody new can sign in until it is.</Notice>}
@@ -100,6 +102,60 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
               </table>
             </div>
           )}
+          <div className="border-t border-line">
+            <CardHeader title="Client users" count={clientUsers.length} description="People at a client who sign in to that client's hub, read reports and approve fixes." />
+            {clientUsers.length === 0 ? (
+              <p className="px-5 pb-4 text-sm text-ink-3">None yet. Add one with the role &quot;Client&quot; and pick their client.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="data-table w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th>Person</th>
+                      <th>Client</th>
+                      <th>Last sign-in</th>
+                      <th>Added</th>
+                      {isAdmin && <th />}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientUsers.map((u) => (
+                      <tr key={u.id}>
+                        <td>
+                          <div className="font-medium text-ink">{u.name ?? u.email}</div>
+                          {u.name && <div className="text-xs text-ink-3">{u.email}</div>}
+                        </td>
+                        <td>
+                          {u.clientId ? (
+                            <Link href={`/clients/${u.clientId}`} className="text-accent hover:underline">
+                              {clientName(u.clientId)}
+                            </Link>
+                          ) : (
+                            <span className="text-ink-3">—</span>
+                          )}
+                        </td>
+                        <td className="text-ink-2">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : "never"}</td>
+                        <td className="text-ink-2">
+                          {fmtDate(u.createdAt)}
+                          {u.invitedBy && u.invitedBy !== "config" && <div className="text-xs text-ink-3">by {u.invitedBy}</div>}
+                        </td>
+                        {isAdmin && (
+                          <td className="text-right">
+                            <form action={removeUser}>
+                              <input type="hidden" name="userId" value={u.id} />
+                              <SubmitButton className={`${btnDanger} ${btnSm}`} confirm={`Remove ${u.email}? They are signed out everywhere and can no longer sign in.`} pendingLabel="Removing…">
+                                Remove
+                              </SubmitButton>
+                            </form>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
           {removed.length > 0 && (
             <details className="border-t border-line">
               <summary className="px-5 py-2.5 text-xs font-medium text-ink-3 hover:text-ink">Removed ({removed.length})</summary>
@@ -139,10 +195,25 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
                   <select id="role" name="role" defaultValue="member" className={inputCls}>
                     <option value="member">Member — audits, fixes, clients</option>
                     <option value="admin">Admin — also manages the team</option>
+                    <option value="client">Client — sees one client&apos;s hub, approves fixes</option>
                   </select>
                 </div>
+                <div>
+                  <label htmlFor="clientId" className={labelCls}>
+                    Client (for the Client role)
+                  </label>
+                  <select id="clientId" name="clientId" defaultValue="" className={inputCls}>
+                    <option value="">—</option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-ink-3">Ignored for team roles. A client user sees only this client: reports, recommended fixes and the approvals they give.</p>
+                </div>
                 <SubmitButton className={`${btnPrimary} w-full`} pendingLabel="Adding…">
-                  Add to team
+                  Add person
                 </SubmitButton>
               </form>
             </Card>

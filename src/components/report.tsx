@@ -106,6 +106,7 @@ export function Report({
           baseUrl={baseUrl}
           back=""
           readOnly
+          hideProposalLinks
           audience="client"
           aiSummary={run.summary?.aiVisibility}
           extras={{

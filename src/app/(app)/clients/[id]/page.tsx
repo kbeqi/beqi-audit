@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { canSeeClient, requireClientAccess } from "@/app/gate";
+import { isTeam } from "@/lib/auth";
 import { clientDetail } from "@/lib/queries";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { Markdown } from "@/components/markdown";
@@ -13,16 +15,21 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  if (!(await canSeeClient(id))) return { title: "Client" };
   const data = await clientDetail(id);
   return { title: data ? `${data.client.name} · Overview` : "Client" };
 }
 
 export default async function ClientOverview({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch> }) {
   const { id } = await params;
+  const team = isTeam(await requireClientAccess(id, `/clients/${id}`));
   const q = await searchParams;
   const data = await clientDetail(id);
   if (!data) notFound();
   const { client, sites, connections, latest, previousOfLatest, latestFindings, pendingFixes, activity, runs } = data;
+  // Clients see what happened to their site, not who at Beqi clicked what.
+  const visibleActivity = team ? activity : activity.filter((a) => a.action.startsWith("fix.") || a.action.startsWith("run."));
+  const waitingForClient = team ? pendingFixes : pendingFixes.filter((p) => p.status === "proposed");
   const active = connections.filter((c) => !c.revokedAt);
   const connectedSites = sites.filter((s) => s.site.connectionId);
   const latestSite = latest ? sites.find((s) => s.site.id === latest.siteId) : undefined;
@@ -34,7 +41,7 @@ export default async function ClientOverview({ params, searchParams }: { params:
   return (
     <div className="space-y-6">
       <ClientNotices q={q} />
-      {active.length === 0 && (
+      {team && active.length === 0 && (
         <Notice tone="accent">
           <strong>Next step:</strong>{" "}
           <Link href={`${base}/settings`} className="font-medium underline">
@@ -46,15 +53,15 @@ export default async function ClientOverview({ params, searchParams }: { params:
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Open findings" value={<span className="num">{openTotal}</span>} hint={latest ? `${critical} critical · ${high} high` : "no audit yet"} />
-        <StatTile label="Fixes to review" value={<span className="num">{pendingFixes.length}</span>} hint={pendingFixes.length ? "waiting for a decision" : "nothing waiting"}>
-          {pendingFixes.length > 0 && (
+        <StatTile label={team ? "Fixes to review" : "Waiting for your approval"} value={<span className="num">{waitingForClient.length}</span>} hint={waitingForClient.length ? (team ? "waiting for a decision" : "recommended by Beqi") : "nothing waiting"}>
+          {waitingForClient.length > 0 && (
             <Link href={`${base}/fixes`} className={`${btnSecondary} ${btnSm}`}>
               Review
             </Link>
           )}
         </StatTile>
         <StatTile label="Audits" value={<span className="num">{runs.length}</span>} hint={latest ? `latest ${timeAgo(latest.finishedAt)}` : "none yet"} />
-        <StatTile label="Sites" value={<span className="num">{sites.length}</span>} hint={`${connectedSites.length} connected`} />
+        <StatTile label="Sites" value={<span className="num">{sites.length}</span>} hint={team ? `${connectedSites.length} connected` : "under Beqi's care"} />
       </div>
 
       {latest && latestSite ? (
@@ -67,7 +74,7 @@ export default async function ClientOverview({ params, searchParams }: { params:
                 <Link href={`/runs/${latest.id}`} className={`${btnSecondary} ${btnSm}`}>
                   Full report
                 </Link>
-                {latest.shareToken && (
+                {team && latest.shareToken && (
                   <Link href={`/share/${latest.shareToken}`} target="_blank" className={`${btnSecondary} ${btnSm}`}>
                     Shared link
                   </Link>
@@ -144,7 +151,7 @@ export default async function ClientOverview({ params, searchParams }: { params:
         </Card>
       ) : (
         <Card>
-          <EmptyState title="No completed audit yet" body={connectedSites.length ? "Use Audit now (top right) to run the first one; it takes about 5–10 minutes per site." : "Connect the client's Webflow workspace in Settings, then run the first audit."} />
+          <EmptyState title="No completed audit yet" body={team ? (connectedSites.length ? "Use Audit now (top right) to run the first one; it takes about 5–10 minutes per site." : "Connect the client's Webflow workspace in Settings, then run the first audit.") : "Beqi runs the first audit shortly; the results appear here."} />
         </Card>
       )}
 
@@ -188,15 +195,15 @@ export default async function ClientOverview({ params, searchParams }: { params:
         </Card>
         <Card>
           <CardHeader title="Recent activity" />
-          {activity.length === 0 ? (
+          {visibleActivity.length === 0 ? (
             <EmptyState title="No activity yet" />
           ) : (
             <ul className="divide-y divide-line">
-              {activity.slice(0, 8).map((a) => (
+              {visibleActivity.slice(0, 8).map((a) => (
                 <li key={a.id} className="flex items-start justify-between gap-3 px-5 py-2.5 text-sm">
                   <div className="min-w-0">
                     <span className="font-medium text-ink">{humanAction(a.action)}</span>
-                    <span className="text-ink-3"> · {a.actor}</span>
+                    {team && <span className="text-ink-3"> · {a.actor}</span>}
                   </div>
                   <time className="shrink-0 text-xs text-ink-3" dateTime={a.createdAt}>
                     {timeAgo(a.createdAt)}

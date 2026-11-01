@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getDb, schema } from "@/db";
 import { getEnv, appUrl } from "@/lib/env";
-import { currentActor } from "@/lib/auth";
+import { teamActor } from "@/lib/auth";
 import { newId, nowIso } from "@/lib/id";
 import { PENDING_COOKIE, completeMcpAuthorization, decodePending, expiresAtFrom } from "@/lib/webflow/mcp-oauth";
 import { importSitesForConnection } from "@/lib/webflow/import";
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   }
   const clientId = pending.clientId;
   const back = `${appUrl(env, request)}/clients/${clientId}/sites`;
-  const actor = await currentActor();
+  const actor = (await teamActor()).email;
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
   if (!client) return NextResponse.redirect(`${appUrl(env, request)}/?error=client_not_found`);

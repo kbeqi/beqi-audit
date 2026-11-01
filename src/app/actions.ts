@@ -6,7 +6,7 @@ import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { revalidatePath } from "next/cache";
 import { getDb, schema } from "@/db";
 import { FREQUENCY_LABELS, type AuditFrequency } from "@/db/schema";
-import { currentActor } from "@/lib/auth";
+import { currentActor, currentActorFull, isTeam, teamActor } from "@/lib/auth";
 import { appUrl, getCtx } from "@/lib/env";
 import { parseRecipients, sendEmail, testEmail } from "@/lib/email";
 import { newId, nowIso, slugify } from "@/lib/id";
@@ -45,7 +45,7 @@ async function guarded<T>(name: string, fn: () => Promise<T>): Promise<T> {
 
 export async function createClient(formData: FormData) {
   return guarded("createClient", async () => {
-    await currentActor();
+    await teamActor();
     const name = String(formData.get("name") ?? "").trim();
     if (!name) throw new Error("Name is required");
     const db = await getDb();
@@ -58,13 +58,19 @@ export async function createClient(formData: FormData) {
 
 export async function updateClient(formData: FormData) {
   return guarded("updateClient", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("clientId"));
     const name = String(formData.get("name") ?? "").trim();
     if (!name) throw new Error("Name is required");
     const rawEmail = String(formData.get("notifyEmail") ?? "").trim();
     const recipients = parseRecipients(rawEmail);
     if (rawEmail && recipients.length === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("That notification email address doesn't look valid.")}`);
+    const slackWebhookUrl = String(formData.get("slackWebhookUrl") ?? "").trim();
+    if (slackWebhookUrl && !/^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]+$/.test(slackWebhookUrl)) {
+      redirect(`/clients/${id}/settings?error=${encodeURIComponent("The Slack webhook URL should start with https://hooks.slack.com/services/.")}`);
+    }
+    const leadEmail = String(formData.get("leadEmail") ?? "").trim().toLowerCase();
+    if (leadEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(leadEmail)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("The Beqi lead's email address doesn't look valid.")}`);
     const db = await getDb();
     await db
       .update(schema.clients)
@@ -74,6 +80,9 @@ export async function updateClient(formData: FormData) {
         notifyEmail: recipients.length ? recipients.join(", ") : null,
         notifyReminder: formData.get("notifyReminder") === "on",
         notifyResults: formData.get("notifyResults") === "on",
+        leadName: String(formData.get("leadName") ?? "").trim() || null,
+        leadEmail: leadEmail || null,
+        slackWebhookUrl: slackWebhookUrl || null,
       })
       .where(eq(schema.clients.id, id));
     await log("client.updated", { clientId: id, name, notifyEmail: recipients });
@@ -84,7 +93,7 @@ export async function updateClient(formData: FormData) {
 
 export async function sendTestEmail(formData: FormData) {
   return guarded("sendTestEmail", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("clientId"));
     const db = await getDb();
     const { env } = await getCtx();
@@ -107,7 +116,7 @@ export async function sendTestEmail(formData: FormData) {
 // foreign keys; run_events and audit_log rows are cleaned up explicitly.
 export async function deleteClient(formData: FormData) {
   return guarded("deleteClient", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const id = String(formData.get("clientId"));
     const db = await getDb();
     const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
@@ -135,7 +144,7 @@ export async function deleteClient(formData: FormData) {
 
 export async function updateSiteSettings(formData: FormData) {
   return guarded("updateSiteSettings", async () => {
-    await currentActor();
+    await teamActor();
     const siteId = String(formData.get("siteId"));
     const freq = String(formData.get("auditFrequency")) as AuditFrequency;
     if (!(freq in FREQUENCY_LABELS)) throw new Error("Unknown audit schedule");
@@ -190,7 +199,7 @@ export async function updateSiteSettings(formData: FormData) {
 // running. One site: open its run; several: back to the client page.
 export async function runClientNow(formData: FormData) {
   return guarded("runClientNow", async () => {
-    await currentActor();
+    await teamActor();
     const clientId = String(formData.get("clientId"));
     const db = await getDb();
     const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, clientId) });
@@ -219,7 +228,7 @@ const LOGO_MAX_BYTES = 1_000_000;
 
 export async function uploadClientLogo(formData: FormData) {
   return guarded("uploadClientLogo", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const id = String(formData.get("clientId"));
     const file = formData.get("logo");
     if (!(file instanceof File) || file.size === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Choose an image file first.")}`);
@@ -240,7 +249,7 @@ export async function uploadClientLogo(formData: FormData) {
 
 export async function removeClientLogo(formData: FormData) {
   return guarded("removeClientLogo", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("clientId"));
     const db = await getDb();
     const { env } = await getCtx();
@@ -255,7 +264,7 @@ export async function removeClientLogo(formData: FormData) {
 
 export async function runNow(formData: FormData) {
   return guarded("runNow", async () => {
-    await currentActor();
+    await teamActor();
     const siteId = String(formData.get("siteId"));
     const db = await getDb();
     // One audit at a time per site: a second click while one is live opens it.
@@ -273,7 +282,7 @@ export async function runNow(formData: FormData) {
 
 export async function ignoreFinding(formData: FormData) {
   return guarded("ignoreFinding", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const siteId = String(formData.get("siteId"));
     const checkId = String(formData.get("checkId"));
     const pagePath = formData.get("pagePath") ? String(formData.get("pagePath")) : null;
@@ -289,7 +298,7 @@ export async function ignoreFinding(formData: FormData) {
 
 export async function markFindingState(formData: FormData) {
   return guarded("markFindingState", async () => {
-    await currentActor();
+    await teamActor();
     const siteId = String(formData.get("siteId"));
     const fingerprint = String(formData.get("fingerprint"));
     const status = String(formData.get("status")) as "open" | "false_positive" | "ignored";
@@ -307,7 +316,7 @@ export async function markFindingState(formData: FormData) {
 
 export async function deleteIgnoreRule(formData: FormData) {
   return guarded("deleteIgnoreRule", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("id"));
     const siteId = String(formData.get("siteId"));
     const db = await getDb();
@@ -322,14 +331,35 @@ export async function deleteIgnoreRule(formData: FormData) {
 // a retried request can never apply the same fix twice.
 export async function decideProposal(formData: FormData) {
   return guarded("decideProposal", async () => {
-    const actor = await currentActor();
+    const who = await currentActorFull();
+    const actor = who.email;
     const id = String(formData.get("proposalId"));
-    const decision = String(formData.get("decision")) as "approve" | "reject" | "apply" | "resolved";
+    let decision = String(formData.get("decision")) as "approve" | "reject" | "apply" | "resolved" | "client_approve";
     const back = String(formData.get("back") ?? "/fixes");
     const db = await getDb();
     const proposal = await db.query.fixProposals.findFirst({ where: eq(schema.fixProposals.id, id) });
     if (!proposal) throw new Error("Proposal not found");
-    const reviewable = ["proposed", "approved", "failed"] as const;
+    const reviewable = ["proposed", "client_approved", "approved", "failed"] as const;
+
+    if (!isTeam(who)) {
+      // A client: only their own sites, only proposed changes, and only
+      // low-risk ones applied directly; the rest wait for Beqi.
+      const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, proposal.siteId), columns: { clientId: true } });
+      if (!site || site.clientId !== who.clientId) throw new Error("Proposal not found");
+      if (proposal.status !== "proposed") redirect(back);
+      if (decision === "resolved" || decision === "approve") throw new Error("Not allowed");
+      if (decision === "apply" && !(proposal.risk === "low" && proposal.action !== "image_compress")) decision = "client_approve";
+    }
+
+    if (decision === "client_approve") {
+      await db
+        .update(schema.fixProposals)
+        .set({ status: "client_approved", approvedBy: actor, error: null })
+        .where(and(eq(schema.fixProposals.id, id), eq(schema.fixProposals.status, "proposed")));
+      await log("fix.client_approved", { proposalId: id, action: proposal.action }, proposal.siteId);
+      revalidatePath(back.split("#")[0]);
+      redirect(back);
+    }
 
     if (decision === "resolved") {
       // A person made the change on the site. Close the proposal and the
@@ -384,7 +414,7 @@ export async function decideProposal(formData: FormData) {
 // workspace gained sites).
 export async function reimportSites(formData: FormData) {
   return guarded("reimportSites", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const id = String(formData.get("connectionId"));
     const clientId = String(formData.get("clientId"));
     const db = await getDb();
@@ -409,7 +439,7 @@ export async function reimportSites(formData: FormData) {
 // sharing clears it, which makes the old link stop working.
 export async function shareRun(formData: FormData) {
   return guarded("shareRun", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const runId = String(formData.get("runId"));
     const db = await getDb();
     const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId) });
@@ -428,7 +458,7 @@ export async function shareRun(formData: FormData) {
 
 export async function unshareRun(formData: FormData) {
   return guarded("unshareRun", async () => {
-    await currentActor();
+    await teamActor();
     const runId = String(formData.get("runId"));
     const db = await getDb();
     const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId), columns: { siteId: true } });
@@ -441,7 +471,7 @@ export async function unshareRun(formData: FormData) {
 
 export async function disconnectWorkspace(formData: FormData) {
   return guarded("disconnectWorkspace", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("connectionId"));
     const clientId = String(formData.get("clientId"));
     const db = await getDb();

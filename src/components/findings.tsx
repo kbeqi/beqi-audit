@@ -18,11 +18,13 @@ export interface FindingsListProps {
   showIgnored?: boolean;
   // Only this category, without the group header (used inside a section).
   category?: CategoryKey;
-  // Public report: no actions, no check ids, no links to proposals.
+  // No ignore / not-an-issue actions and no check ids (clients, public report).
   readOnly?: boolean;
+  // Public report: no links to proposals either.
+  hideProposalLinks?: boolean;
 }
 
-export function FindingsList({ findings, siteId, baseUrl, back, proposals = [], newFingerprints, severity = "all", showIgnored = false, category, readOnly = false }: FindingsListProps) {
+export function FindingsList({ findings, siteId, baseUrl, back, proposals = [], newFingerprints, severity = "all", showIgnored = false, category, readOnly = false, hideProposalLinks = false }: FindingsListProps) {
   const visible = findings.filter((f) => (showIgnored || !f.ignored) && (severity === "all" || f.severity === severity) && (!category || f.category === category));
   if (visible.length === 0) {
     return <p className="px-5 py-6 text-center text-sm text-ink-3">{findings.length ? "Nothing matches this filter." : "No findings."}</p>;
@@ -43,7 +45,7 @@ export function FindingsList({ findings, siteId, baseUrl, back, proposals = [], 
     return (
       <ul className="divide-y divide-line">
         {sortList(visible).map((f) => (
-          <FindingRow key={f.id} f={f} siteId={siteId} baseUrl={baseUrl} back={back} proposals={byFinding.get(f.id) ?? []} isNew={newFingerprints?.has(f.fingerprint) ?? false} readOnly={readOnly} />
+          <FindingRow key={f.id} f={f} siteId={siteId} baseUrl={baseUrl} back={back} proposals={byFinding.get(f.id) ?? []} isNew={newFingerprints?.has(f.fingerprint) ?? false} readOnly={readOnly} hideProposalLinks={hideProposalLinks} />
         ))}
       </ul>
     );
@@ -60,7 +62,7 @@ export function FindingsList({ findings, siteId, baseUrl, back, proposals = [], 
             </h3>
             <ul className="divide-y divide-line">
               {list.map((f) => (
-                <FindingRow key={f.id} f={f} siteId={siteId} baseUrl={baseUrl} back={back} proposals={byFinding.get(f.id) ?? []} isNew={newFingerprints?.has(f.fingerprint) ?? false} readOnly={readOnly} />
+                <FindingRow key={f.id} f={f} siteId={siteId} baseUrl={baseUrl} back={back} proposals={byFinding.get(f.id) ?? []} isNew={newFingerprints?.has(f.fingerprint) ?? false} readOnly={readOnly} hideProposalLinks={hideProposalLinks} />
               ))}
             </ul>
           </section>
@@ -70,10 +72,10 @@ export function FindingsList({ findings, siteId, baseUrl, back, proposals = [], 
   );
 }
 
-function FindingRow({ f, siteId, baseUrl, back, proposals, isNew, readOnly = false }: { f: Finding; siteId: string; baseUrl: string; back: string; proposals: FixProposal[]; isNew: boolean; readOnly?: boolean }) {
+function FindingRow({ f, siteId, baseUrl, back, proposals, isNew, readOnly = false, hideProposalLinks = false }: { f: Finding; siteId: string; baseUrl: string; back: string; proposals: FixProposal[]; isNew: boolean; readOnly?: boolean; hideProposalLinks?: boolean }) {
   const data = (f.data ?? {}) as { evidence?: string[] };
   const evidence = Array.isArray(data.evidence) ? data.evidence.filter((e) => typeof e === "string" && e.trim()) : [];
-  const open = proposals.find((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying");
+  const open = proposals.find((p) => p.status === "proposed" || p.status === "client_approved" || p.status === "approved" || p.status === "applying");
   const applied = proposals.find((p) => p.status === "applied" || p.status === "resolved");
   return (
     <li id={`finding-${f.id}`} className={`scroll-mt-20 px-5 py-3 ${f.ignored ? "opacity-60" : ""}`}>
@@ -111,11 +113,11 @@ function FindingRow({ f, siteId, baseUrl, back, proposals, isNew, readOnly = fal
               </ul>
             </details>
           )}
-          {!readOnly && (open || applied) && (
+          {!hideProposalLinks && (open || applied) && (
             <div className="mt-2 flex flex-wrap gap-2 text-xs">
               {open && (
                 <Link href={`/fixes/${open.id}`} className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium tone-accent hover:brightness-95">
-                  {open.status === "proposed" ? "Fix proposed — review" : open.status === "applying" ? "Fix being applied…" : "Fix approved"} →
+                  {open.status === "proposed" ? "Fix proposed — review" : open.status === "applying" ? "Fix being applied…" : open.status === "client_approved" ? "Approved · Beqi applies next" : "Fix approved"} →
                 </Link>
               )}
               {applied && !open && (

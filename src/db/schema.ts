@@ -6,7 +6,9 @@ import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-or
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
-export type UserRole = "admin" | "member";
+// "client": a person at a client company; sees only that client's hub and can
+// approve low-risk fixes. Tied to a client through users.client_id.
+export type UserRole = "admin" | "member" | "client";
 
 // Team members who may sign in. ADMIN_EMAILS (wrangler.jsonc) are admins even
 // without a row, so the first sign-in bootstraps the table.
@@ -15,6 +17,8 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   name: text("name"),
   role: text("role").$type<UserRole>().notNull().default("member"),
+  // Set for role "client": the one client this person belongs to.
+  clientId: text("client_id"),
   invitedBy: text("invited_by"),
   lastLoginAt: text("last_login_at"),
   disabledAt: text("disabled_at"),
@@ -67,6 +71,11 @@ export const clients = sqliteTable("clients", {
   notifyReminder: integer("notify_reminder", { mode: "boolean" }).notNull().default(true),
   // Score, counts and highlights when an audit finishes.
   notifyResults: integer("notify_results", { mode: "boolean" }).notNull().default(true),
+  // The Beqi person who owns this client ("one named lead").
+  leadName: text("lead_name"),
+  leadEmail: text("lead_email"),
+  // Slack incoming webhook for the shared client channel; null = no Slack.
+  slackWebhookUrl: text("slack_webhook_url"),
   createdAt: text("created_at").notNull().default(now),
 });
 
@@ -365,7 +374,9 @@ export const snapshots = sqliteTable(
 );
 
 // "resolved": a person fixed it on the site themselves; the next audit confirms.
-export type ProposalStatus = "proposed" | "approved" | "applying" | "applied" | "resolved" | "rejected" | "reverted" | "failed";
+// "client_approved": the client signed off on a medium/high-risk change and
+// Beqi applies it.
+export type ProposalStatus = "proposed" | "client_approved" | "approved" | "applying" | "applied" | "resolved" | "rejected" | "reverted" | "failed";
 export type ProposalRisk = "low" | "medium" | "high";
 
 export interface ProposalChange {
@@ -411,6 +422,8 @@ export const fixProposals = sqliteTable(
     previous: text("previous", { mode: "json" }).$type<Record<string, unknown>>(),
     rationale: text("rationale"),
     effort: text("effort").$type<Effort>(),
+    // What the client said when approving or declining.
+    clientNote: text("client_note"),
     approvedBy: text("approved_by"),
     appliedBy: text("applied_by"),
     appliedAt: text("applied_at"),

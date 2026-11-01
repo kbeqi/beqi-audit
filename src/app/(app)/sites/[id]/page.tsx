@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { requireSignedIn } from "@/app/gate";
-import { currentActorOrNull } from "@/lib/auth";
+import { canSeeClient, requireSignedIn } from "@/app/gate";
+import { currentActorOrNull, isTeam } from "@/lib/auth";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/db";
@@ -23,29 +23,33 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   if (!(await currentActorOrNull())) return { title: "Sign in" };
   const db = await getDb();
-  const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, id), columns: { name: true } });
-  return { title: site?.name ?? "Site" };
+  const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, id), columns: { name: true, clientId: true } });
+  if (!site || !(await canSeeClient(site.clientId))) return { title: "Site" };
+  return { title: site.name };
 }
 
 export default async function SitePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ sev?: string; saved?: string }> }) {
   const { id } = await params;
   const { sev, saved } = await searchParams;
-  await requireSignedIn(`/sites/${id}`);
+  const actor = await requireSignedIn(`/sites/${id}`);
   const data = await siteDetail(id);
   if (!data) notFound();
   const { site, client, connection, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, metrics } = data;
+  const team = isTeam(actor);
+  if (!team && site.clientId !== actor.clientId) notFound();
+  const role = team ? "team" : "client";
   const running = runs.find((r) => r.status === "running" || r.status === "queued") ?? null;
   const history = runs.filter((r) => r.status === "complete").map((r) => r.scoreOverall).reverse().slice(-12);
   const back = `/sites/${site.id}`;
   const severity = (SEVERITY_ORDER as string[]).includes(sev ?? "") ? (sev as Severity) : "all";
   const newFps = new Set(findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === latest?.id).map((f) => f.fingerprint));
-  const openProposals = proposals.filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "applying" || p.status === "failed");
-  const doneProposals = proposals.filter((p) => p.status === "applied" || p.status === "resolved" || p.status === "rejected").slice(0, 10);
+  const openProposals = proposals.filter((p) => (team ? p.status === "proposed" || p.status === "client_approved" || p.status === "approved" || p.status === "applying" || p.status === "failed" : p.status === "proposed"));
+  const doneProposals = proposals.filter((p) => p.status === "applied" || p.status === "resolved" || p.status === "rejected" || (!team && (p.status === "client_approved" || p.status === "approved" || p.status === "applying"))).slice(0, 10);
   const counts = Object.fromEntries(SEVERITY_ORDER.map((s) => [s, findings.filter((f) => f.severity === s).length])) as Record<Severity, number>;
 
   return (
     <div className="space-y-6">
-      <Crumbs items={[{ href: "/clients", label: "Clients" }, { href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/sites`, label: "Sites" }, { label: site.name }]} />
+      <Crumbs items={[...(team ? [{ href: "/clients", label: "Clients" }] : []), { href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/sites`, label: "Sites" }, { label: site.name }]} />
       <PageHeader
         title={site.name}
         description={
@@ -60,18 +64,20 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                 <StatusPill status={running.status} /> View progress
               </Link>
             )}
-            <form action={runNow}>
-              <input type="hidden" name="siteId" value={site.id} />
-              <SubmitButton className={btnPrimary} disabled={!connection || !!running} pendingLabel="Starting audit…">
-                {running ? "Audit running" : latest ? "Run audit now" : "Run first audit"}
-              </SubmitButton>
-            </form>
+            {team && (
+              <form action={runNow}>
+                <input type="hidden" name="siteId" value={site.id} />
+                <SubmitButton className={btnPrimary} disabled={!connection || !!running} pendingLabel="Starting audit…">
+                  {running ? "Audit running" : latest ? "Run audit now" : "Run first audit"}
+                </SubmitButton>
+              </form>
+            )}
           </>
         }
       />
 
       {saved && <Notice tone="good">Settings saved.</Notice>}
-      {!connection && (
+      {team && !connection && (
         <Notice tone="warn">
           This site has no active Webflow connection.{" "}
           <Link href={`/clients/${client.id}`} className="font-medium underline">
@@ -80,7 +86,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
           to audit it.
         </Notice>
       )}
-      {connection && !latest && !running && (
+      {team && connection && !latest && !running && (
         <Notice tone="accent">
           <strong>Ready for its first audit.</strong> Claude reviews up to {site.maxPages} pages through Webflow and the live site; expect 5–10 minutes. Nothing is changed on the site during an audit.
         </Notice>
@@ -95,7 +101,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
               <Delta now={latest?.scoreOverall} before={previous?.scoreOverall} /> <span className="text-xs text-ink-3">vs previous audit</span>
             </div>
             <div className="text-xs text-ink-3">Last audit {latest ? timeAgo(latest.finishedAt) : "—"}</div>
-            <div className="text-xs text-ink-3">Next {site.auditFrequency === "off" ? "manual only" : fmtDay(site.nextRunAt)}</div>
+            <div className="text-xs text-ink-3">Next {site.auditFrequency === "off" ? (team ? "manual only" : "on request") : fmtDay(site.nextRunAt)}</div>
             {history.length >= 2 && (
               <div className="pt-1">
                 <Sparkline values={history} width={140} height={32} />
@@ -141,7 +147,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
         />
         {latest ? (
           <>
-            <TopIssues findings={findings} proposals={proposals} baseUrl={site.baseUrl} />
+            <TopIssues findings={findings} proposals={proposals} baseUrl={site.baseUrl} audience={team ? "team" : "client"} />
             <CategorySections
               scores={latest.scores}
               previousScores={previous?.scores}
@@ -152,6 +158,8 @@ export default async function SitePage({ params, searchParams }: { params: Promi
               proposals={proposals}
               newFingerprints={newFps}
               severity={severity}
+              readOnly={!team}
+              audience={team ? "team" : "client"}
               aiSummary={latest.summary?.aiVisibility}
               extras={metrics.length > 0 || latest.summary?.perf ? { performance: <PerformanceCard metrics={metrics} unavailable={latest.summary?.perf?.unavailable} embedded /> } : undefined}
             />
@@ -166,8 +174,8 @@ export default async function SitePage({ params, searchParams }: { params: Promi
       {latest?.agentSummary && (
         <Card>
           <CardHeader
-            title="Claude's summary"
-            description={`From the audit on ${fmtDate(latest.finishedAt)} · ${latest.summary?.pagesReviewed ?? 0} of ${latest.summary?.pagesTotal ?? 0} pages reviewed · ${fmtDuration(latest.usage?.durationMs)} · ${fmtCost(latest.usage?.estimatedCostUsd)}`}
+            title={team ? "Claude's summary" : "Summary"}
+            description={`From the audit on ${fmtDate(latest.finishedAt)} · ${latest.summary?.pagesReviewed ?? 0} of ${latest.summary?.pagesTotal ?? 0} pages reviewed${team ? ` · ${fmtDuration(latest.usage?.durationMs)} · ${fmtCost(latest.usage?.estimatedCostUsd)}` : ""}`}
             actions={
               <Link href={`/runs/${latest.id}`} className="text-xs font-medium text-accent hover:underline">
                 Full run
@@ -196,13 +204,13 @@ export default async function SitePage({ params, searchParams }: { params: Promi
       )}
 
       <Card id="fixes">
-        <CardHeader title="Proposed fixes" count={openProposals.length} description="Nothing is written to Webflow until you approve it. Applied changes go live on the site's next publish." />
+        <CardHeader title={team ? "Proposed fixes" : "Recommended fixes"} count={openProposals.length} description={team ? "Nothing is written to Webflow until you approve it. Applied changes go live on the site's next publish." : "Nothing is changed until you approve it. Small, safe changes are applied right away; larger ones are applied by Beqi after your approval."} />
         {openProposals.length === 0 ? (
-          <EmptyState title="No fixes waiting" body={latest ? "Claude found nothing it can safely fix automatically, or everything has been reviewed." : "Run an audit to get fix proposals."} />
+          <EmptyState title="No fixes waiting" body={latest ? (team ? "Claude found nothing it can safely fix automatically, or everything has been reviewed." : "Nothing is waiting for your approval right now.") : team ? "Run an audit to get fix proposals." : "Recommendations appear after the first audit."} />
         ) : (
           <ul className="divide-y divide-line">
             {openProposals.map((p) => (
-              <ProposalRow key={p.id} proposal={p} back={`${back}#fixes`} />
+              <ProposalRow key={p.id} proposal={p} back={`${back}#fixes`} role={role} />
             ))}
           </ul>
         )}
@@ -211,7 +219,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             <summary className="px-5 py-2.5 text-xs font-medium text-ink-3 hover:text-ink">Recently applied or rejected ({doneProposals.length})</summary>
             <ul className="divide-y divide-line border-t border-line">
               {doneProposals.map((p) => (
-                <ProposalRow key={p.id} proposal={p} back={`${back}#fixes`} />
+                <ProposalRow key={p.id} proposal={p} back={`${back}#fixes`} role={role} />
               ))}
             </ul>
           </details>
@@ -233,7 +241,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                   <th>Status</th>
                   <th>Score</th>
                   <th>Findings</th>
-                  <th>Cost</th>
+                  {team && <th>Cost</th>}
                 </tr>
               </thead>
               <tbody>
@@ -250,7 +258,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
                     </td>
                     <td className="num">{r.scoreOverall ?? "—"}</td>
                     <td className="num text-ink-2">{r.summary ? Object.values(r.summary.findingsBySeverity).reduce((a, b) => a + b, 0) : "—"}</td>
-                    <td className="num text-ink-2">{fmtCost(r.usage?.estimatedCostUsd)}</td>
+                    {team && <td className="num text-ink-2">{fmtCost(r.usage?.estimatedCostUsd)}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -258,6 +266,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
           )}
         </Card>
 
+        {team ? (
         <Card>
           <CardHeader title="Settings" />
           <form action={updateSiteSettings} className="space-y-3 p-5 text-sm">
@@ -337,6 +346,29 @@ export default async function SitePage({ params, searchParams }: { params: Promi
             </div>
           )}
         </Card>
+        ) : (
+          <Card>
+            <CardHeader title="How this works" />
+            <div className="space-y-2 p-5 text-sm text-ink-2">
+              <p>
+                Beqi audits this site {site.auditFrequency === "off" ? "on request" : FREQUENCY_LABELS[site.auditFrequency].toLowerCase()} and after each publish, reviewing up to {site.maxPages} pages. Nothing on the site is changed by an audit.
+              </p>
+              <p>Fixes are only applied after you approve them. Small, safe changes go in straight away; anything larger is applied by Beqi, and the next audit confirms it.</p>
+              {client.leadName && (
+                <p>
+                  Questions? Your Beqi lead is <span className="font-medium text-ink">{client.leadName}</span>
+                  {client.leadEmail ? (
+                    <>
+                      {" "}
+                      (<a href={`mailto:${client.leadEmail}`} className="text-accent hover:underline">{client.leadEmail}</a>)
+                    </>
+                  ) : null}
+                  .
+                </p>
+              )}
+            </div>
+          </Card>
+        )}
       </div>
     </div>
   );

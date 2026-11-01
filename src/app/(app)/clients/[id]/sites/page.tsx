@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { canSeeClient, requireClientAccess } from "@/app/gate";
+import { isTeam } from "@/lib/auth";
 import { clientDetail } from "@/lib/queries";
 import { FREQUENCY_LABELS } from "@/db/schema";
 import { runNow } from "@/app/actions";
@@ -12,12 +14,14 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  if (!(await canSeeClient(id))) return { title: "Sites" };
   const data = await clientDetail(id);
   return { title: data ? `${data.client.name} · Sites` : "Sites" };
 }
 
 export default async function ClientSites({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch> }) {
   const { id } = await params;
+  const team = isTeam(await requireClientAccess(id, `/clients/${id}/sites`));
   const q = await searchParams;
   const data = await clientDetail(id);
   if (!data) notFound();
@@ -28,15 +32,17 @@ export default async function ClientSites({ params, searchParams }: { params: Pr
     <div className="space-y-6">
       <ClientNotices q={q} />
       <Card>
-        <CardHeader title="Sites" count={sites.length} description="Every site in the client's connected Webflow workspaces. Open a site for its findings, fix proposals and audit schedule." />
+        <CardHeader title="Sites" count={sites.length} description={team ? "Every site in the client's connected Webflow workspaces. Open a site for its findings, fix proposals and audit schedule." : "Your sites under Beqi's care. Open one for its findings and recommended fixes."} />
         {sites.length === 0 ? (
           <EmptyState
             title="No sites yet"
-            body={active.length ? "The connected workspace returned no sites. Use “Re-import sites” in Settings after adding one in Webflow." : "Sites are imported automatically when a workspace is connected in Settings."}
+            body={team ? (active.length ? "The connected workspace returned no sites. Use “Re-import sites” in Settings after adding one in Webflow." : "Sites are imported automatically when a workspace is connected in Settings.") : "Beqi is still setting things up; your sites appear here once connected."}
             action={
-              <Link href={`/clients/${client.id}/settings`} className={btnSecondary}>
-                Go to Settings
-              </Link>
+              team ? (
+                <Link href={`/clients/${client.id}/settings`} className={btnSecondary}>
+                  Go to Settings
+                </Link>
+              ) : undefined
             }
           />
         ) : (
@@ -51,7 +57,7 @@ export default async function ClientSites({ params, searchParams }: { params: Pr
                   <th>Fixes</th>
                   <th>Schedule</th>
                   <th>Last audit</th>
-                  <th />
+                  {team && <th />}
                 </tr>
               </thead>
               <tbody>
@@ -90,7 +96,7 @@ export default async function ClientSites({ params, searchParams }: { params: Pr
                         <span className="text-xs text-ink-3">—</span>
                       )}
                     </td>
-                    <td className="text-ink-2">{s.site.auditFrequency === "off" ? "manual" : `${FREQUENCY_LABELS[s.site.auditFrequency]} · ${fmtDay(s.site.nextRunAt)}`}</td>
+                    <td className="text-ink-2">{s.site.auditFrequency === "off" ? (team ? "manual" : "on request") : `${FREQUENCY_LABELS[s.site.auditFrequency]} · ${fmtDay(s.site.nextRunAt)}`}</td>
                     <td className="whitespace-nowrap text-ink-2">
                       {s.running ? (
                         <Link href={`/runs/${s.running}`}>
@@ -100,14 +106,16 @@ export default async function ClientSites({ params, searchParams }: { params: Pr
                         timeAgo(s.latest?.finishedAt)
                       )}
                     </td>
-                    <td className="text-right">
-                      <form action={runNow}>
-                        <input type="hidden" name="siteId" value={s.site.id} />
-                        <SubmitButton className={`${btnSecondary} ${btnSm}`} disabled={!s.site.connectionId || !!s.running} pendingLabel="Starting…">
-                          {s.running ? "Running…" : "Audit"}
-                        </SubmitButton>
-                      </form>
-                    </td>
+                    {team && (
+                      <td className="text-right">
+                        <form action={runNow}>
+                          <input type="hidden" name="siteId" value={s.site.id} />
+                          <SubmitButton className={`${btnSecondary} ${btnSm}`} disabled={!s.site.connectionId || !!s.running} pendingLabel="Starting…">
+                            {s.running ? "Running…" : "Audit"}
+                          </SubmitButton>
+                        </form>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

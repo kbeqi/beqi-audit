@@ -61,6 +61,7 @@ export function RunMonitor({
   pageBudget,
   recentDurations,
   compact = false,
+  hideLog = false,
 }: {
   streamId: string;
   initial: Ev[];
@@ -69,6 +70,8 @@ export function RunMonitor({
   pageBudget: number;
   recentDurations: number[];
   compact?: boolean;
+  // Clients see the progress and estimate, not the agent's step-by-step log.
+  hideLog?: boolean;
 }) {
   const stream = useStream(streamId, initial, live, startedAt);
   const { events, polling, elapsedMs } = stream;
@@ -124,8 +127,12 @@ export function RunMonitor({
           </ol>
         </div>
       )}
-      {!polling && failed && <div className="border-b border-line px-5 py-2 text-xs text-critical-text">The run stopped with an error; details in the log below.</div>}
-      <LiveLog streamId={streamId} initial={initial} live={live} compact={compact} startedAt={startedAt} stream={stream} />
+      {!polling && failed && !hideLog && <div className="border-b border-line px-5 py-2 text-xs text-critical-text">The run stopped with an error; details in the log below.</div>}
+      {hideLog ? (
+        !polling && <div className="px-5 py-3 text-sm text-ink-3">{failed ? "This audit stopped early. Beqi will run it again." : "Finished. Reload the page to see the results."}</div>
+      ) : (
+        <LiveLog streamId={streamId} initial={initial} live={live} compact={compact} startedAt={startedAt} stream={stream} />
+      )}
     </div>
   );
 }

@@ -122,8 +122,8 @@ export function StatusPill({ status }: { status: RunStatus | string }) {
 }
 
 export function ProposalStatusPill({ status }: { status: ProposalStatus }) {
-  const tone: Tone = status === "applied" || status === "resolved" ? "good" : status === "failed" ? "critical" : status === "rejected" ? "neutral" : status === "applying" ? "accent" : status === "approved" ? "warn" : "neutral";
-  const label = status === "proposed" ? "needs review" : status === "resolved" ? "fixed manually" : status;
+  const tone: Tone = status === "applied" || status === "resolved" ? "good" : status === "failed" ? "critical" : status === "rejected" ? "neutral" : status === "applying" ? "accent" : status === "approved" || status === "client_approved" ? "warn" : "neutral";
+  const label = status === "proposed" ? "needs review" : status === "resolved" ? "fixed manually" : status === "client_approved" ? "approved by client" : status;
   return (
     <Pill tone={tone}>
       {status === "applying" && <span aria-hidden className="pulse inline-block h-1.5 w-1.5 rounded-full bg-accent-bg" />}

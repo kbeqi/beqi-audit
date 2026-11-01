@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { canSeeClient, requireClientAccess } from "@/app/gate";
+import { isTeam } from "@/lib/auth";
 import { clientDetail } from "@/lib/queries";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { Card, CardHeader, EmptyState, StatusPill, fmtCost, fmtDate, fmtDuration, triggerLabel } from "@/components/ui";
@@ -9,12 +11,14 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  if (!(await canSeeClient(id))) return { title: "Audits" };
   const data = await clientDetail(id);
   return { title: data ? `${data.client.name} · Audits` : "Audits" };
 }
 
 export default async function ClientAudits({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch & { site?: string }> }) {
   const { id } = await params;
+  const team = isTeam(await requireClientAccess(id, `/clients/${id}/audits`));
   const q = await searchParams;
   const data = await clientDetail(id);
   if (!data) notFound();
@@ -29,7 +33,7 @@ export default async function ClientAudits({ params, searchParams }: { params: P
         <CardHeader
           title="Audits"
           count={filtered.length}
-          description="Every audit of this client's sites, newest first. Scheduled audits run automatically; use Audit now for an extra one."
+          description={team ? "Every audit of this client's sites, newest first. Scheduled audits run automatically; use Audit now for an extra one." : "Every audit of your sites, newest first. Beqi runs them on a schedule and after each publish."}
           actions={
             sites.length > 1 ? (
               <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by site">
@@ -46,7 +50,7 @@ export default async function ClientAudits({ params, searchParams }: { params: P
           }
         />
         {filtered.length === 0 ? (
-          <EmptyState title="No audits yet" body="Use Audit now (top right) to run the first one." />
+          <EmptyState title="No audits yet" body={team ? "Use Audit now (top right) to run the first one." : "Your first audit will appear here once Beqi runs it."} />
         ) : (
           <div className="overflow-x-auto">
             <table className="data-table w-full text-sm">
@@ -59,9 +63,9 @@ export default async function ClientAudits({ params, searchParams }: { params: P
                   <th>Score</th>
                   <th>Pages</th>
                   <th>Findings</th>
-                  <th>Duration</th>
-                  <th>Cost</th>
-                  <th>Shared</th>
+                  {team && <th>Duration</th>}
+                  {team && <th>Cost</th>}
+                  {team && <th>Shared</th>}
                 </tr>
               </thead>
               <tbody>
@@ -83,17 +87,19 @@ export default async function ClientAudits({ params, searchParams }: { params: P
                       <td className="num">{r.scoreOverall ?? "—"}</td>
                       <td className="num text-ink-2">{r.summary ? `${r.summary.pagesReviewed}/${r.summary.pagesTotal}` : "—"}</td>
                       <td className="num text-ink-2">{findings ?? "—"}</td>
-                      <td className="num text-ink-2">{fmtDuration(r.usage?.durationMs)}</td>
-                      <td className="num text-ink-2">{fmtCost(r.usage?.estimatedCostUsd)}</td>
-                      <td>
-                        {r.shareToken ? (
-                          <Link href={`/share/${r.shareToken}`} target="_blank" className="text-xs text-accent hover:underline">
-                            link
-                          </Link>
-                        ) : (
-                          <span className="text-xs text-ink-3">—</span>
-                        )}
-                      </td>
+                      {team && <td className="num text-ink-2">{fmtDuration(r.usage?.durationMs)}</td>}
+                      {team && <td className="num text-ink-2">{fmtCost(r.usage?.estimatedCostUsd)}</td>}
+                      {team && (
+                        <td>
+                          {r.shareToken ? (
+                            <Link href={`/share/${r.shareToken}`} target="_blank" className="text-xs text-accent hover:underline">
+                              link
+                            </Link>
+                          ) : (
+                            <span className="text-xs text-ink-3">—</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
