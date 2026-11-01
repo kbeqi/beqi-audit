@@ -18,6 +18,7 @@ import { MODEL, emptyUsage } from "@/agent/anthropic";
 import type { PreviousFinding } from "@/agent/prompts";
 import type { AuditReport } from "@/agent/schemas";
 import { measureKeyPages, type PsiResult } from "./psi";
+import { buildInventory, inventoryFindings, inventoryText, type Inventory, type InventorySummary } from "./inventory";
 import { getJson, putJson, runKey } from "./store";
 import { CATEGORY_ORDER, scoreCategories } from "./score";
 import type { FindingDraft } from "./types";
@@ -75,12 +76,48 @@ export async function stepMetrics(env: RunEnv, runId: string): Promise<{ pages: 
   return { pages: result.pages.length, passing: result.summary.passing };
 }
 
+// Step 2b: the URL inventory (every published page and sitemap URL fetched
+// once, compared with the previous audit). Never fails the run; a Webflow or
+// network problem leaves a warning in the log and an empty inventory.
+export async function stepInventory(env: RunEnv, runId: string): Promise<{ pages: number; broken: number; changes: number }> {
+  const { db, run, site, connection } = await loadRun(env, runId);
+  const emit = createEventSink(env, run.id);
+  await emit("status", "Checking every published URL, the sitemap and robots.txt");
+  if (!connection) throw new Error("Site has no active Webflow connection");
+  let inventory: Inventory;
+  try {
+    const fresh = await ensureFreshConnection(env, connection);
+    inventory = await buildInventory({ site, connection: fresh, mcpUrl: env.WEBFLOW_MCP_URL });
+  } catch (e) {
+    const msg = (e as Error).message ?? String(e);
+    await emit("warning", `URL inventory failed: ${msg.slice(0, 200)}`);
+    return { pages: 0, broken: 0, changes: 0 };
+  }
+  for (const err of inventory.errors) await emit("warning", err);
+  const previousRun = await db.query.runs.findFirst({
+    where: and(eq(schema.runs.siteId, site.id), eq(schema.runs.status, "complete"), ne(schema.runs.id, run.id)),
+    orderBy: desc(schema.runs.createdAt),
+  });
+  const previous = previousRun ? await getJson<Inventory>(env.AUDIT_STORE, runKey(previousRun.id, "inventory")) : null;
+  const { findings, summary } = inventoryFindings(inventory, previous);
+  await putJson(env.AUDIT_STORE, runKey(run.id, "inventory"), inventory);
+  await putJson(env.AUDIT_STORE, runKey(run.id, "inventory-summary"), { summary, text: inventoryText(summary, inventory) });
+  await putJson(env.AUDIT_STORE, runKey(run.id, "inventory-findings"), { findings } satisfies ExtraFindings);
+  const changes = summary.changes ? summary.changes.gone + summary.changes.redirected + summary.changes.noindexed : 0;
+  await emit(
+    summary.broken || changes ? "warning" : "status",
+    `${summary.pages} URLs checked: ${summary.ok} fine, ${summary.redirects} redirect, ${summary.broken} broken, ${summary.noindex} noindex${summary.changes ? `; since the last audit ${summary.changes.gone} gone, ${summary.changes.redirected} redirecting, ${summary.changes.noindexed} noindex` : ""}`,
+  );
+  return { pages: summary.pages, broken: summary.broken, changes };
+}
+
 // Step 3: the agent audits the site; raw outputs go to KV.
 export async function stepAgent(env: RunEnv, runId: string): Promise<{ reportChars: number; blockedHosts: number }> {
   const { db, run, site, client, connection } = await loadRun(env, runId);
   if (!connection) throw new Error("Site has no active Webflow connection");
   const fresh = await ensureFreshConnection(env, connection);
   const psi = await getJson<{ summaryText: string | null }>(env.AUDIT_STORE, runKey(run.id, "psi"));
+  const inventory = await getJson<{ text: string }>(env.AUDIT_STORE, runKey(run.id, "inventory-summary"));
 
   // Open findings from the last complete run, so the agent re-verifies them.
   const previousRun = await db.query.runs.findFirst({
@@ -101,6 +138,7 @@ export async function stepAgent(env: RunEnv, runId: string): Promise<{ reportCha
     connection: fresh,
     previous,
     psiSummary: psi?.summaryText ?? null,
+    inventorySummary: inventory?.text ?? null,
     emit: createEventSink(env, run.id),
   });
   await putJson(env.AUDIT_STORE, runKey(run.id, "report-text"), { text: out.reportText, blockedHosts: out.blockedHosts });
@@ -174,6 +212,8 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
   const psiExtra = await getJson<ExtraFindings>(env.AUDIT_STORE, runKey(runId, "psi-findings"));
   const aiExtra = await getJson<ExtraFindings>(env.AUDIT_STORE, runKey(runId, "ai-findings"));
   const aiSummary = await getJson<RunSummary["aiVisibility"]>(env.AUDIT_STORE, runKey(runId, "ai-summary"));
+  const inventoryExtra = await getJson<ExtraFindings>(env.AUDIT_STORE, runKey(runId, "inventory-findings"));
+  const inventorySummary = await getJson<{ summary: InventorySummary }>(env.AUDIT_STORE, runKey(runId, "inventory-summary"));
 
   const drafts: { draft: FindingDraft; index: number }[] = [];
   report.findings.forEach((f, index) => {
@@ -199,7 +239,7 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
   // Deterministic findings get indexes past the agent's so proposals can't
   // point at them.
   let extraIndex = report.findings.length;
-  for (const d of [...(psiExtra?.findings ?? []), ...(aiExtra?.findings ?? [])]) {
+  for (const d of [...(inventoryExtra?.findings ?? []), ...(psiExtra?.findings ?? []), ...(aiExtra?.findings ?? [])]) {
     if (!isCheckId(d.checkId)) continue;
     drafts.push({ index: extraIndex++, draft: d });
   }
@@ -342,6 +382,7 @@ export async function stepAnalyze(env: RunEnv, runId: string): Promise<{ finding
     perf: psi?.summary ?? undefined,
     aiVisibility: aiSummary ?? undefined,
     regressions,
+    inventory: inventorySummary?.summary ?? undefined,
   };
   await db.update(schema.runs).set({ scoreOverall: overall, scores, summary }).where(eq(schema.runs.id, run.id));
   return { findings: active.length, overall };
@@ -410,6 +451,7 @@ export async function stepFinalize(env: RunEnv, runId: string, error?: string): 
       trigger: run.trigger,
       newCriticalHigh: summary?.regressions?.newCriticalHigh ?? 0,
       aiVisibility: summary?.aiVisibility ?? null,
+      pagesGone: summary?.inventory?.changes?.gone ?? 0,
     }),
     site.id,
   );
@@ -420,6 +462,7 @@ export async function runAuditInline(env: RunEnv, runId: string): Promise<void> 
   try {
     await stepPrepare(env, runId);
     await stepMetrics(env, runId);
+    await stepInventory(env, runId).catch((e) => console.warn("inventory failed", e));
     await stepAgent(env, runId);
     await stepStructure(env, runId);
     await stepAiVisibility(env, runId).catch((e) => console.warn("ai visibility failed", e));

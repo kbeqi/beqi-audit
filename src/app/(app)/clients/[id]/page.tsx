@@ -148,6 +148,7 @@ export default async function ClientOverview({ params, searchParams }: { params:
               {latest.trigger === "publish" && latest.summary?.regressions && (
                 <span>
                   <span className="font-medium text-ink-2">After publish:</span> {latest.summary.regressions.newCriticalHigh ? `${latest.summary.regressions.newCriticalHigh} new critical/high` : "no new critical/high findings"}
+                  {latest.summary.inventory?.changes && latest.summary.inventory.changes.gone ? `, ${latest.summary.inventory.changes.gone} page${latest.summary.inventory.changes.gone === 1 ? "" : "s"} gone` : ""}
                 </span>
               )}
             </div>

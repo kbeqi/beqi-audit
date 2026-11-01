@@ -4,6 +4,7 @@ import { CategorySections } from "./category-sections";
 import { TopIssues } from "./top-issues";
 import { Markdown } from "./markdown";
 import { AiVisibilityCard, PerformanceCard } from "./insights";
+import { InventoryCard } from "./inventory-card";
 import { Delta, ScoreRing, SeverityPill, fmtDate, hostOf } from "./ui";
 
 
@@ -110,6 +111,7 @@ export function Report({
           audience="client"
           aiSummary={run.summary?.aiVisibility}
           extras={{
+            ...(run.summary?.inventory ? { seo: <InventoryCard summary={run.summary.inventory} embedded audience="client" /> } : {}),
             ...(metrics.length > 0 || run.summary?.perf ? { performance: <PerformanceCard metrics={metrics} unavailable={run.summary?.perf?.unavailable} embedded /> } : {}),
             ...(run.summary?.aiVisibility ? { ai: <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} publicView embedded /> } : {}),
           }}

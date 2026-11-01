@@ -112,14 +112,16 @@ export function auditTaskPrompt(opts: {
   linkBudget: number;
   previous: PreviousFinding[];
   psiSummary: string | null;
+  inventorySummary?: string | null;
 }): string {
-  const { site, clientName, agentId, pageBudget, linkBudget, previous, psiSummary } = opts;
+  const { site, clientName, agentId, pageBudget, linkBudget, previous, psiSummary, inventorySummary } = opts;
   const host = new URL(site.baseUrl).host;
   const base = site.baseUrl.replace(/\/$/, "");
   const staging = site.shortName && !host.endsWith(".webflow.io") ? `${site.shortName}.webflow.io` : null;
   const urls = ["/robots.txt", "/sitemap.xml", "/llms.txt", ...site.keyPages].map((p) => `${base}${p.startsWith("/") ? p : `/${p}`}`);
   if (staging) urls.push(`https://${staging}/robots.txt`, `https://${staging}/`);
   const psi = psiSummary ? `\n# PageSpeed Insights (measured, mobile)\n${psiSummary}\nThese are already recorded as perf.* findings; do not report them again. Use them to prioritise what you observe in the HTML (render-blocking scripts, unsized images, heavy embeds).\n` : "";
+  const inventory = inventorySummary ? `\n# URL inventory (checked by code)\n${inventorySummary}\nStatus codes, sitemap membership, robots.txt reachability and changes since the last audit are already recorded as seo.* findings; do not re-check or report them. Use the sitemap for page discovery and robots.txt only for the AI crawler rules.\n` : "";
   const prev = previous.length
     ? `\n# Open findings from the previous audit\nRe-verify each of these specifically and report it again (same checkId, pagePath, subject) if it is still present, so resolved ones can be closed:\n${previous
         .slice(0, 150)
@@ -137,7 +139,7 @@ ${staging ? `- Staging host: ${staging} (check once whether it is indexable, wor
 ${urls.map((u) => `  - ${u}`).join("\n")}
 - Page budget: fetch at most ${pageBudget} pages' HTML. Link budget: at most ${linkBudget} extra link checks.
 - agent_id for every Webflow call: ${agentId}
-${prev}${psi}
+${prev}${psi}${inventory}
 Start with webflow_guide_tool (session_id "start"), then follow the workflow. Finish with the markdown summary and the JSON report.`;
 }
 

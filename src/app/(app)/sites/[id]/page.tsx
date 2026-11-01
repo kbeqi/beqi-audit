@@ -15,6 +15,7 @@ import { Markdown } from "@/components/markdown";
 import { ProposalRow } from "@/components/proposals";
 import { PerformanceCard } from "@/components/insights";
 import { TrafficCard } from "@/components/traffic-card";
+import { InventoryCard } from "@/components/inventory-card";
 import { listGa4Properties, listGscSites, type Ga4Property, type GscSite } from "@/lib/google/api";
 import { freshGoogleConnection } from "@/lib/google/oauth";
 import { getEnv } from "@/lib/env";
@@ -171,7 +172,10 @@ export default async function SitePage({ params, searchParams }: { params: Promi
               readOnly={!team}
               audience={team ? "team" : "client"}
               aiSummary={latest.summary?.aiVisibility}
-              extras={metrics.length > 0 || latest.summary?.perf ? { performance: <PerformanceCard metrics={metrics} unavailable={latest.summary?.perf?.unavailable} embedded /> } : undefined}
+              extras={{
+                ...(latest.summary?.inventory ? { seo: <InventoryCard summary={latest.summary.inventory} embedded audience={team ? "team" : "client"} /> } : {}),
+                ...(metrics.length > 0 || latest.summary?.perf ? { performance: <PerformanceCard metrics={metrics} unavailable={latest.summary?.perf?.unavailable} embedded /> } : {}),
+              }}
             />
           </>
         ) : (

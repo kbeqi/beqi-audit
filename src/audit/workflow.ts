@@ -1,5 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { stepAgent, stepAiVisibility, stepAnalyze, stepFinalize, stepMetrics, stepPrepare, stepStructure } from "./runner";
+import { stepAgent, stepAiVisibility, stepAnalyze, stepFinalize, stepInventory, stepMetrics, stepPrepare, stepStructure } from "./runner";
 import { applyProposal } from "./fixer";
 import type { AuditWorkflowParams } from "./start";
 
@@ -22,6 +22,8 @@ export class AuditRunWorkflow extends WorkflowEntrypoint<CloudflareEnv, AuditWor
     try {
       await step.do("prepare", quick, () => stepPrepare(env, runId));
       await step.do("metrics", slow, () => stepMetrics(env, runId));
+      // The URL inventory is a guard, not the audit: a failure must not stop the run.
+      await step.do("inventory", slow, () => stepInventory(env, runId)).catch((e) => console.warn("inventory step failed", e));
       await step.do("agent", agent, () => stepAgent(env, runId));
       await step.do("structure", slow, () => stepStructure(env, runId));
       // The AI sample is optional: a failure here must not fail the audit.

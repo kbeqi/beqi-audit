@@ -107,6 +107,7 @@ export function resultsEmail(opts: {
   trigger?: "schedule" | "manual" | "publish";
   newCriticalHigh?: number;
   aiVisibility?: { answers: number; mentioned: number; cited: number; inaccuracies: number } | null;
+  pagesGone?: number;
 }): EmailMessage {
   const link = `${opts.appUrl}/runs/${opts.runId}`;
   const delta = opts.score != null && opts.previousScore != null ? opts.score - opts.previousScore : null;
@@ -116,7 +117,8 @@ export function resultsEmail(opts: {
   const countsText = `${opts.counts.critical} critical · ${opts.counts.high} high · ${opts.counts.medium} medium · ${opts.counts.low} low`;
   const hl = opts.highlights.slice(0, 6);
   const intro = afterPublish ? `${opts.siteName} (${opts.siteHost}) was published, so we checked it again.` : `The audit of ${opts.siteName} (${opts.siteHost}) is done.`;
-  const regression = afterPublish && opts.newCriticalHigh ? `${opts.newCriticalHigh} new critical or high finding(s) since the last audit; worth a look before the next change.` : afterPublish ? "Nothing new at critical or high severity since the last audit." : null;
+  const gone = opts.pagesGone ? ` ${opts.pagesGone} page${opts.pagesGone === 1 ? "" : "s"} that served at the last audit no longer load${opts.pagesGone === 1 ? "s" : ""}.` : "";
+  const regression = afterPublish && opts.newCriticalHigh ? `${opts.newCriticalHigh} new critical or high finding(s) since the last audit; worth a look before the next change.${gone}` : afterPublish ? `Nothing new at critical or high severity since the last audit.${gone}` : gone ? gone.trim() : null;
   const ai = opts.aiVisibility && opts.aiVisibility.answers > 0 ? `AI assistants (sample of ${opts.aiVisibility.answers} answers): brand mentioned in ${opts.aiVisibility.mentioned}, site cited in ${opts.aiVisibility.cited}, ${opts.aiVisibility.inaccuracies} inaccurate claim(s).` : null;
   const text = `Hi,\n\n${intro}\n\nScore: ${opts.score ?? "–"}/100${deltaText}\nFindings: ${countsText}\nProposed fixes awaiting review: ${opts.proposals}\n${regression ? `${regression}\n` : ""}${ai ? `${ai}\n` : ""}\n${hl.length ? "Highlights:\n" + hl.map((h) => `- ${h}`).join("\n") + "\n\n" : ""}${opts.summary ? opts.summary + "\n\n" : ""}Full report: ${link}\n\n— Beqi`;
   const html = layout(

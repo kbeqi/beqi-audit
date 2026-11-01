@@ -204,6 +204,18 @@ export interface RunSummary {
   aiVisibility?: AiVisibilitySummary;
   // What changed vs the previous completed run (for publish-triggered runs).
   regressions?: { scoreDelta: number | null; newCriticalHigh: number };
+  // The URL inventory check (migration / indexability guard), from code.
+  inventory?: {
+    pages: number;
+    ok: number;
+    redirects: number;
+    broken: number;
+    noindex: number;
+    sitemapUrls: number;
+    robotsOk: boolean;
+    sitemapOk: boolean;
+    changes: { gone: number; redirected: number; noindexed: number; sitemapDelta: number } | null;
+  };
 }
 
 export interface AiVisibilitySummary {

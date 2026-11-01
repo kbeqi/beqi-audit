@@ -16,6 +16,7 @@ import { CopyField } from "@/components/copy-field";
 import { appUrl, getEnv } from "@/lib/env";
 import { SubmitButton } from "@/components/submit-button";
 import { AiVisibilityCard, PerformanceCard } from "@/components/insights";
+import { InventoryCard } from "@/components/inventory-card";
 import { Card, CardHeader, Crumbs, KeyValue, Notice, PageHeader, ScoreRing, StatTile, StatusPill, btnPrimary, btnSecondary, btnSm, fmtCost, fmtDate, fmtDuration, fmtNumber, triggerLabel } from "@/components/ui";
 
 
@@ -149,6 +150,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             ? `${regressions.newCriticalHigh} new critical or high finding${regressions.newCriticalHigh === 1 ? "" : "s"} since the last audit.`
             : "No new critical or high findings since the last audit."}
           {regressions.scoreDelta !== null && ` Score ${regressions.scoreDelta > 0 ? "up" : regressions.scoreDelta < 0 ? "down" : "unchanged"}${regressions.scoreDelta ? ` ${Math.abs(regressions.scoreDelta)}` : ""}.`}
+          {run.summary?.inventory?.changes && (run.summary.inventory.changes.gone || run.summary.inventory.changes.noindexed || run.summary.inventory.changes.redirected) ? ` Pages: ${run.summary.inventory.changes.gone} gone, ${run.summary.inventory.changes.redirected} redirecting, ${run.summary.inventory.changes.noindexed} noindex.` : ""}
         </Notice>
       )}
 
@@ -206,6 +208,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             audience={team ? "team" : "client"}
             aiSummary={run.summary.aiVisibility}
             extras={{
+              ...(run.summary.inventory ? { seo: <InventoryCard summary={run.summary.inventory} embedded audience={team ? "team" : "client"} /> } : {}),
               performance: <PerformanceCard metrics={metrics} unavailable={run.summary.perf?.unavailable} embedded />,
               ai: <AiVisibilityCard summary={run.summary.aiVisibility} answers={aiAnswers} publicView={!team} embedded />,
             }}
