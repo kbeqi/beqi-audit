@@ -125,9 +125,20 @@ export async function stepAgent(env: RunEnv, runId: string): Promise<{ reportCha
     orderBy: desc(schema.runs.createdAt),
   });
   let previous: PreviousFinding[] = [];
+  const aiIssues: { prompt: string; engine: string; issue: string }[] = [];
   if (previousRun) {
     const rows = await db.query.findings.findMany({ where: and(eq(schema.findings.runId, previousRun.id), eq(schema.findings.ignored, false)) });
     previous = rows.map((f) => ({ checkId: f.checkId, pagePath: f.pagePath, subject: (f.data?.subject as string | undefined) ?? null }));
+    // Wrong claims from the last AI sample feed the content fixes (the AEO loop).
+    const answers = await db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, previousRun.id), columns: { prompt: true, engine: true, issues: true } });
+    const seen = new Set<string>();
+    for (const a of answers) {
+      for (const issue of a.issues) {
+        if (seen.has(issue)) continue;
+        seen.add(issue);
+        aiIssues.push({ prompt: a.prompt, engine: a.engine, issue });
+      }
+    }
   }
 
   const out = await runAuditAgent({
@@ -139,6 +150,7 @@ export async function stepAgent(env: RunEnv, runId: string): Promise<{ reportCha
     previous,
     psiSummary: psi?.summaryText ?? null,
     inventorySummary: inventory?.text ?? null,
+    aiIssues,
     emit: createEventSink(env, run.id),
   });
   await putJson(env.AUDIT_STORE, runKey(run.id, "report-text"), { text: out.reportText, blockedHosts: out.blockedHosts });

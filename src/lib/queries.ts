@@ -340,3 +340,69 @@ export async function recentRuns(limit = 20): Promise<(Run & { site: Site | unde
 
 export { SUPPRESSED };
 export type { WebflowConnection };
+
+// The AEO loop: how AI assistants answered the client's questions over the
+// last audits, per site and per question, plus the open inaccurate claims and
+// the content fixes in flight.
+export interface AiTrendRun {
+  runId: string;
+  finishedAt: string | null;
+  answers: number;
+  mentioned: number;
+  cited: number;
+  recommended: number;
+  inaccuracies: number;
+}
+
+export interface AiPromptTrend {
+  prompt: string;
+  // One cell per run (same order as `runs`): mentioned / answers, or null when
+  // the question was not asked in that run.
+  cells: { mentioned: number; cited: number; answers: number }[] | null[];
+  latestIssues: string[];
+}
+
+export interface SiteAiTrend {
+  site: Site;
+  runs: AiTrendRun[]; // oldest first
+  prompts: AiPromptTrend[];
+  openClaims: Finding[];
+  contentFixes: FixProposal[];
+}
+
+export async function clientAiTrend(clientId: string): Promise<SiteAiTrend[]> {
+  const db = await getDb();
+  const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, clientId), orderBy: schema.sites.name });
+  const out: SiteAiTrend[] = [];
+  for (const site of sites) {
+    const completed = await db.query.runs.findMany({ where: and(eq(schema.runs.siteId, site.id), eq(schema.runs.status, "complete")), orderBy: desc(schema.runs.createdAt), limit: 8 });
+    const withSample = completed.filter((r) => r.summary?.aiVisibility && r.summary.aiVisibility.answers > 0).reverse();
+    const runIds = withSample.map((r) => r.id);
+    const [answers, claims, fixes] = await Promise.all([
+      runIds.length ? db.query.aiAnswers.findMany({ where: inArray(schema.aiAnswers.runId, runIds) }) : Promise.resolve([]),
+      completed[0] ? db.query.findings.findMany({ where: and(eq(schema.findings.runId, completed[0].id), eq(schema.findings.checkId, "ai.inaccurate-claim"), eq(schema.findings.ignored, false)) }) : Promise.resolve([]),
+      db.query.fixProposals.findMany({ where: and(eq(schema.fixProposals.siteId, site.id), eq(schema.fixProposals.action, "content_text")), orderBy: desc(schema.fixProposals.createdAt), limit: 30 }),
+    ]);
+    const states = claims.length ? await db.query.findingStates.findMany({ where: and(eq(schema.findingStates.siteId, site.id), inArray(schema.findingStates.fingerprint, claims.map((c) => c.fingerprint))) }) : [];
+    const suppressed = new Set(states.filter((s) => SUPPRESSED.has(s.status)).map((s) => s.fingerprint));
+    const runs: AiTrendRun[] = withSample.map((r) => {
+      const v = r.summary!.aiVisibility!;
+      return { runId: r.id, finishedAt: r.finishedAt, answers: v.answers, mentioned: v.mentioned, cited: v.cited, recommended: v.recommended, inaccuracies: v.inaccuracies };
+    });
+    // Questions from the latest sample first; older-only questions after.
+    const latestId = runIds[runIds.length - 1];
+    const order: string[] = [];
+    for (const a of answers.filter((x) => x.runId === latestId)) if (!order.includes(a.prompt)) order.push(a.prompt);
+    for (const a of answers) if (!order.includes(a.prompt)) order.push(a.prompt);
+    const prompts: AiPromptTrend[] = order.map((prompt) => {
+      const cells = runIds.map((rid) => {
+        const list = answers.filter((a) => a.runId === rid && a.prompt === prompt);
+        return list.length ? { mentioned: list.filter((a) => a.mentioned).length, cited: list.filter((a) => a.cited).length, answers: list.length } : null;
+      });
+      const latestIssues = [...new Set(answers.filter((a) => a.runId === latestId && a.prompt === prompt).flatMap((a) => a.issues))];
+      return { prompt, cells: cells as AiPromptTrend["cells"], latestIssues };
+    });
+    out.push({ site, runs, prompts, openClaims: claims.filter((c) => !suppressed.has(c.fingerprint)), contentFixes: fixes });
+  }
+  return out;
+}

@@ -49,6 +49,7 @@ Designer tools (designer_tool, element_snapshot_tool, anything that needs an ope
 8. Staging host: when the task gives a staging host (<shortName>.webflow.io), fetch its /robots.txt and homepage once. If the homepage is served with 200, no noindex meta or X-Robots-Tag and robots.txt does not disallow it, report seo.staging-domain-indexable.
 9. Evaluate every catalog check against the evidence. Severity defaults are in the catalog; lower a severity only with a clear reason (e.g. noindex on a thank-you page is info). For every finding set confidence (high: seen directly in a tool result or fetched page; medium: strongly indicated; low: inferred from partial evidence) and effort (quick: minutes in Webflow or an approved fix; moderate: an hour or two of content or design work; large: a project).
 10. Fix proposals: for findings whose catalog entry names a fix action other than manual, propose the exact change when you are confident it is correct and safe: full new title/description text (write good copy from the page's actual content, under the length limits), complete JSON-LD objects, the exact alt text, the heading level, the script id to remove. Set risk: low for metadata and alt text, medium for schema and sitemap flags, high for anything that changes visible content or removes scripts. Set effort the same way as for findings. Never propose a fix you have not got the target ids for.
+    content_text proposals (for the aeo.* answer checks and for wrong AI claims): one proposal replaces the text of exactly one heading, paragraph or text block. Find the element with data_element_tool query_elements on the page (siteId and pageId at the top level; filter by text or type), and set target.elementId to the JSON string of its id object exactly as returned, e.g. {"component":"...","element":"..."}; target.pageId to the page id. changes = [{ field: "text", from: the element's current text verbatim, to: the new text }]. Write the new text in the page's existing voice and about the same length: a plain declarative sentence or two that states the fact (what, for whom, where, price, date) and names the subject. Only state facts that appear on the site or in the key facts; never invent. risk is high (visible content), so a person approves before anything is written. Skip CMS-bound text, component instances whose text is a prop you cannot resolve, and rich text blocks.
 11. Brand facts: from the pages you read, record the brand name as the site presents it, other names used for it, and 5-10 short verifiable facts (what it does, for whom, where, services, prices, founding). Then write 6-10 questions a prospective customer might ask an AI assistant where this site should be the answer or a cited source (mostly unbranded, 1-2 branded). These feed a separate AI visibility sample; they are not findings.
 
 # Budgets
@@ -82,7 +83,8 @@ export const FIX_SYSTEM_PROMPT = `You apply one approved fix to a client's Webfl
 
 1. Apply exactly the approved change described in the task and nothing else. Do not fix other things you notice; mention them in your summary instead.
 2. Read before you write: fetch the current value of the target first and compare it with the "from" value in the proposal. If the current value differs materially from "from" (someone changed it since the audit), do NOT write — report status "skipped" and explain.
-3. Write with the narrowest action that does the job (update_page_settings for page SEO fields, bulk_update_pages_schema_markup for JSON-LD, update_page_sitemap_status for sitemap flags, update_asset for asset alt text, set_heading_level / set_settings for elements, set_site_freeform_code / set_page_freeform_code for custom code, remove_site_script / remove_page_script for scripts). Never delete pages, elements, assets, collections or items. Never publish the site.
+3. Write with the narrowest action that does the job (update_page_settings for page SEO fields, bulk_update_pages_schema_markup for JSON-LD, update_page_sitemap_status for sitemap flags, update_asset for asset alt text, set_heading_level / set_settings for elements, set_text for a content_text change, set_site_freeform_code / set_page_freeform_code for custom code, remove_site_script / remove_page_script for scripts). Never delete pages, elements, assets, collections or items. Never publish the site.
+   For content_text: target.elementId is the JSON of the element's id object ({"component","element"}); pass it verbatim to data_element_tool (siteId and target.pageId at the top level). Read the element first with query_elements (element_id) and compare its text with "from"; write with set_text and the exact "to" text; read it back.
 4. Verify by reading the value back after writing, and report what you saw.
 
 # Webflow MCP protocol
@@ -113,14 +115,22 @@ export function auditTaskPrompt(opts: {
   previous: PreviousFinding[];
   psiSummary: string | null;
   inventorySummary?: string | null;
+  // Wrong claims AI assistants made about the business in the previous sample.
+  aiIssues?: { prompt: string; engine: string; issue: string }[];
 }): string {
-  const { site, clientName, agentId, pageBudget, linkBudget, previous, psiSummary, inventorySummary } = opts;
+  const { site, clientName, agentId, pageBudget, linkBudget, previous, psiSummary, inventorySummary, aiIssues = [] } = opts;
   const host = new URL(site.baseUrl).host;
   const base = site.baseUrl.replace(/\/$/, "");
   const staging = site.shortName && !host.endsWith(".webflow.io") ? `${site.shortName}.webflow.io` : null;
   const urls = ["/robots.txt", "/sitemap.xml", "/llms.txt", ...site.keyPages].map((p) => `${base}${p.startsWith("/") ? p : `/${p}`}`);
   if (staging) urls.push(`https://${staging}/robots.txt`, `https://${staging}/`);
   const psi = psiSummary ? `\n# PageSpeed Insights (measured, mobile)\n${psiSummary}\nThese are already recorded as perf.* findings; do not report them again. Use them to prioritise what you observe in the HTML (render-blocking scripts, unsized images, heavy embeds).\n` : "";
+  const ai = aiIssues.length
+    ? `\n# What AI assistants got wrong last time\nIn the previous AI visibility sample these answers contradicted the site. For each one, find the key page that should answer the question, confirm the correct fact from the site, and report aeo.answer-not-explicit on that page (subject = the fact) with a content_text proposal that states the correct fact plainly near the top, when a suitable text element exists:\n${aiIssues
+        .slice(0, 12)
+        .map((x) => `- ${x.engine}, asked "${x.prompt}": ${x.issue}`)
+        .join("\n")}\n`
+    : "";
   const inventory = inventorySummary ? `\n# URL inventory (checked by code)\n${inventorySummary}\nStatus codes, sitemap membership, robots.txt reachability and changes since the last audit are already recorded as seo.* findings; do not re-check or report them. Use the sitemap for page discovery and robots.txt only for the AI crawler rules.\n` : "";
   const prev = previous.length
     ? `\n# Open findings from the previous audit\nRe-verify each of these specifically and report it again (same checkId, pagePath, subject) if it is still present, so resolved ones can be closed:\n${previous
@@ -139,7 +149,7 @@ ${staging ? `- Staging host: ${staging} (check once whether it is indexable, wor
 ${urls.map((u) => `  - ${u}`).join("\n")}
 - Page budget: fetch at most ${pageBudget} pages' HTML. Link budget: at most ${linkBudget} extra link checks.
 - agent_id for every Webflow call: ${agentId}
-${prev}${psi}${inventory}
+${prev}${psi}${inventory}${ai}
 Start with webflow_guide_tool (session_id "start"), then follow the workflow. Finish with the markdown summary and the JSON report.`;
 }
 

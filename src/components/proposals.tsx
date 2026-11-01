@@ -14,6 +14,7 @@ export const ACTION_LABELS: Record<FixAction, string> = {
   custom_code: "Custom code",
   remove_script: "Remove script",
   image_compress: "Compress images",
+  content_text: "Page text",
   manual: "Manual",
 };
 
@@ -31,6 +32,7 @@ export const ACTION_NOTES: Partial<Record<FixAction, string>> = {
   custom_code: "Edits head/footer code; goes live on the next publish.",
   remove_script: "Removes an applied script; goes live on the next publish.",
   image_compress: "Replaces the asset file in place and cannot be undone from here. Keep an original copy. Webflow refuses the conversion if it would not be smaller.",
+  content_text: "Replaces the text of one heading or paragraph on the page (visible to visitors); goes live on the next publish.",
 };
 
 // JSON values (schema markup) are shown pretty-printed; everything else as text.

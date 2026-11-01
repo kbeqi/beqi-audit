@@ -283,7 +283,7 @@ export default async function SitePage({ params, searchParams }: { params: Promi
         </Card>
 
         {team ? (
-        <Card>
+        <Card id="settings">
           <CardHeader title="Settings" />
           <form action={updateSiteSettings} className="space-y-3 p-5 text-sm">
             <input type="hidden" name="siteId" value={site.id} />

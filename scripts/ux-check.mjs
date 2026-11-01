@@ -28,6 +28,7 @@ const PAGES = [
   { path: "/clients/c_goldie/audits", tabs: true },
   { path: "/clients/c_goldie/fixes", tabs: true },
   { path: "/clients/c_goldie/sites", tabs: true },
+  { path: "/clients/c_goldie/ai", tabs: true },
   { path: "/clients/c_goldie/settings", tabs: true },
   { path: "/sites/s_goldie" },
   { path: "/runs/r_g3" },

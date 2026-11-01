@@ -37,6 +37,7 @@ export interface AuditAgentInput {
   // Text block of measured Core Web Vitals (from PageSpeed Insights), or null.
   psiSummary: string | null;
   inventorySummary?: string | null;
+  aiIssues?: { prompt: string; engine: string; issue: string }[];
   emit: EventSink;
 }
 
@@ -51,7 +52,7 @@ export interface AuditAgentOutput {
 }
 
 export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentOutput> {
-  const { env, runId, site, clientName, connection, previous, psiSummary, inventorySummary, emit } = input;
+  const { env, runId, site, clientName, connection, previous, psiSummary, inventorySummary, aiIssues, emit } = input;
   const client = getAnthropic(env);
   const started = Date.now();
   const usage = emptyUsage();
@@ -63,7 +64,7 @@ export async function runAuditAgent(input: AuditAgentInput): Promise<AuditAgentO
   if (site.shortName && !host.endsWith(".webflow.io")) allowedDomains.push(`${site.shortName}.webflow.io`);
 
   const messages: Anthropic.Beta.BetaMessageParam[] = [
-    { role: "user", content: auditTaskPrompt({ site, clientName, agentId, pageBudget, linkBudget: 40, previous, psiSummary, inventorySummary }) },
+    { role: "user", content: auditTaskPrompt({ site, clientName, agentId, pageBudget, linkBudget: 40, previous, psiSummary, inventorySummary, aiIssues }) },
   ];
   const writeAttempts: string[] = [];
   const blockedHosts = new Set<string>();

@@ -17,6 +17,7 @@ function clientItems(clientId: string) {
     { href: `${base}/audits`, label: "Audits", match: (p: string) => p.startsWith(`${base}/audits`) || p.startsWith("/runs") },
     { href: `${base}/fixes`, label: "Fixes", match: (p: string) => p.startsWith(`${base}/fixes`) || p.startsWith("/fixes") },
     { href: `${base}/sites`, label: "Sites", match: (p: string) => p.startsWith(`${base}/sites`) || p.startsWith("/sites") },
+    { href: `${base}/ai`, label: "AI answers", match: (p: string) => p.startsWith(`${base}/ai`) },
   ];
 }
 
