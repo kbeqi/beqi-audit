@@ -32,6 +32,8 @@ const LABELS: Record<string, string> = {
   "email.sent": "Email sent",
   "email.skipped": "Email skipped (not configured)",
   "email.failed": "Email failed",
+  "slack.sent": "Posted to Slack",
+  "slack.failed": "Slack post failed",
   "action.error": "An action failed (details in the log)",
   "team.user_added": "Team member added",
   "team.role_changed": "Team role changed",

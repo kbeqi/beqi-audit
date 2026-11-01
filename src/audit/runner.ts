@@ -6,6 +6,7 @@ import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import { dbFromEnv, schema } from "@/db";
 import type { CategoryKey, RunSummary, Severity } from "@/db/schema";
 import { parseRecipients, resultsEmail, sendEmail } from "@/lib/email";
+import { auditResultSlack, postSlack, slackConfigured } from "@/lib/slack";
 import { appUrl } from "@/lib/env";
 import { newId, nowIso, sha256Hex } from "@/lib/id";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
@@ -361,13 +362,35 @@ export async function stepFinalize(env: RunEnv, runId: string, error?: string): 
     return;
   }
   const to = client?.notifyResults ? parseRecipients(client.notifyEmail) : [];
-  if (!client || to.length === 0) return;
+  const slack = client?.notifyResults && slackConfigured(client.slackWebhookUrl) ? client.slackWebhookUrl : null;
+  if (!client || (to.length === 0 && !slack)) return;
   const fresh = await db.query.runs.findFirst({ where: eq(schema.runs.id, run.id) });
   const previous = await db.query.runs.findFirst({
     where: and(eq(schema.runs.siteId, site.id), eq(schema.runs.status, "complete"), ne(schema.runs.id, run.id)),
     orderBy: desc(schema.runs.createdAt),
   });
   const summary = fresh?.summary;
+  if (slack) {
+    const posted = await postSlack(
+      env,
+      slack,
+      "results",
+      auditResultSlack({
+        siteName: site.name,
+        score: fresh?.scoreOverall ?? null,
+        previousScore: previous?.scoreOverall ?? null,
+        counts: summary?.findingsBySeverity ?? { critical: 0, high: 0, medium: 0, low: 0 },
+        proposals: summary?.proposals ?? 0,
+        highlights: fresh?.highlights ?? [],
+        link: `${appUrl(env)}/runs/${run.id}`,
+        trigger: run.trigger,
+        newCriticalHigh: summary?.regressions?.newCriticalHigh ?? 0,
+      }),
+      site.id,
+    );
+    await emit("status", posted === "sent" ? "Results posted to Slack" : posted === "failed" ? "Slack post failed (see activity log)" : "Slack post skipped");
+  }
+  if (to.length === 0) return;
   const result = await sendEmail(
     env,
     "results",

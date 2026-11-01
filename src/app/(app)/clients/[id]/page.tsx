@@ -4,6 +4,9 @@ import { notFound } from "next/navigation";
 import { canSeeClient, requireClientAccess } from "@/app/gate";
 import { isTeam } from "@/lib/auth";
 import { clientDetail } from "@/lib/queries";
+import { clientProgress, lastDays } from "@/lib/progress";
+import { getDb } from "@/db";
+import { ProgressCard } from "@/components/progress-card";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { Markdown } from "@/components/markdown";
 import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, ScoreRing, StatTile, btnSecondary, btnSm, fmtDate, timeAgo } from "@/components/ui";
@@ -27,6 +30,8 @@ export default async function ClientOverview({ params, searchParams }: { params:
   const data = await clientDetail(id);
   if (!data) notFound();
   const { client, sites, connections, latest, previousOfLatest, latestFindings, pendingFixes, activity, runs } = data;
+  const window = lastDays(30);
+  const progress = latest ? await clientProgress(await getDb(), client.id, window.since, window.until) : null;
   // Clients see what happened to their site, not who at Beqi clicked what.
   const visibleActivity = team ? activity : activity.filter((a) => a.action.startsWith("fix.") || a.action.startsWith("run."));
   const waitingForClient = team ? pendingFixes : pendingFixes.filter((p) => p.status === "proposed");
@@ -63,6 +68,8 @@ export default async function ClientOverview({ params, searchParams }: { params:
         <StatTile label="Audits" value={<span className="num">{runs.length}</span>} hint={latest ? `latest ${timeAgo(latest.finishedAt)}` : "none yet"} />
         <StatTile label="Sites" value={<span className="num">{sites.length}</span>} hint={team ? `${connectedSites.length} connected` : "under Beqi's care"} />
       </div>
+
+      {progress && <ProgressCard progress={progress} clientId={client.id} label="Last 30 days · scores then and now, what was fixed, what is waiting" audience={team ? "team" : "client"} />}
 
       {latest && latestSite ? (
         <Card>

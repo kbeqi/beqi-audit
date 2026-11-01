@@ -8,6 +8,8 @@ import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { createEventSink } from "@/agent/events";
 import { runFixAgent } from "@/agent/fix";
 import { FIX_MODEL } from "@/agent/anthropic";
+import { appUrl } from "@/lib/env";
+import { fixAppliedSlack, postSlack, slackConfigured } from "@/lib/slack";
 import { putJson, runKey } from "./store";
 import type { RunEnv } from "./runner";
 
@@ -60,6 +62,25 @@ export async function applyProposal(env: RunEnv, proposalId: string): Promise<vo
       action: applied ? "fix.applied" : `fix.${out.result.status}`,
       detail: { proposalId: proposal.id, action: proposal.action, model: FIX_MODEL, writes: out.writes, changes: out.result.changesMade, needsPublish: out.result.needsPublish, costUsd: out.usage.estimatedCostUsd },
     });
+    if (applied) {
+      const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId), columns: { slackWebhookUrl: true, notifyResults: true } });
+      if (client?.notifyResults && slackConfigured(client.slackWebhookUrl)) {
+        await postSlack(
+          env,
+          client.slackWebhookUrl,
+          "fix",
+          fixAppliedSlack({
+            siteName: site.name,
+            title: proposal.title ?? proposal.action,
+            summary: out.result.summary,
+            needsPublish: out.result.needsPublish,
+            by: proposal.approvedBy ?? "Beqi",
+            link: `${appUrl(env)}/fixes/${proposal.id}`,
+          }),
+          site.id,
+        );
+      }
+    }
   } catch (e) {
     const message = (e as Error).message ?? String(e);
     await db.update(schema.fixProposals).set({ status: "failed", error: message.slice(0, 500) }).where(eq(schema.fixProposals.id, proposal.id));

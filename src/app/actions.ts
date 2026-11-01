@@ -13,6 +13,8 @@ import { newId, nowIso, slugify } from "@/lib/id";
 import { ensurePublishWebhook, importSitesForConnection } from "@/lib/webflow/import";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startFix, startRun } from "@/audit/start";
+import { sendMonthlyReports } from "@/audit/scheduler";
+import { postSlack, slackConfigured } from "@/lib/slack";
 
 async function log(action: string, detail: Record<string, unknown>, siteId?: string | null) {
   const db = await getDb();
@@ -80,6 +82,7 @@ export async function updateClient(formData: FormData) {
         notifyEmail: recipients.length ? recipients.join(", ") : null,
         notifyReminder: formData.get("notifyReminder") === "on",
         notifyResults: formData.get("notifyResults") === "on",
+        notifyMonthly: formData.get("notifyMonthly") === "on",
         leadName: String(formData.get("leadName") ?? "").trim() || null,
         leadEmail: leadEmail || null,
         slackWebhookUrl: slackWebhookUrl || null,
@@ -109,6 +112,38 @@ export async function sendTestEmail(formData: FormData) {
           ? "Email isn't configured yet: set the RESEND_API_KEY secret and EMAIL_FROM in wrangler.jsonc."
           : "The email provider rejected the message; details are in the activity log.";
     redirect(`/clients/${id}/settings?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
+  });
+}
+
+export async function sendTestSlack(formData: FormData) {
+  return guarded("sendTestSlack", async () => {
+    await teamActor();
+    const id = String(formData.get("clientId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
+    if (!client) throw new Error("Client not found");
+    if (!slackConfigured(client.slackWebhookUrl)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Save a Slack webhook URL first.")}`);
+    const result = await postSlack(env, client.slackWebhookUrl, "test", { text: `Beqi Audit is connected to this channel for ${client.name}. Audit results, applied fixes and the monthly progress report will be posted here.` });
+    const msg = result === "sent" ? "Test message posted to Slack." : "Slack rejected the message; check the webhook URL (details in the activity log).";
+    redirect(`/clients/${id}/settings?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
+  });
+}
+
+// Sends last month's progress report now (for a demo, or a client who joined
+// mid-month). Resets the month guard first so the scheduler's rule still holds.
+export async function sendMonthlyReportNow(formData: FormData) {
+  return guarded("sendMonthlyReportNow", async () => {
+    await teamActor();
+    const id = String(formData.get("clientId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
+    if (!client) throw new Error("Client not found");
+    if (parseRecipients(client.notifyEmail).length === 0 && !slackConfigured(client.slackWebhookUrl)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Save a notification email or a Slack webhook first.")}`);
+    await db.update(schema.clients).set({ monthlyReportSentFor: null, notifyMonthly: true }).where(eq(schema.clients.id, id));
+    const sent = await sendMonthlyReports(env, new Date(), true, id);
+    redirect(`/clients/${id}/settings?notice=${encodeURIComponent(sent ? "Monthly report sent." : "Monthly report posted (or nothing to report yet: no completed audit last month).")}`);
   });
 }
 

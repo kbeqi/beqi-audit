@@ -136,6 +136,53 @@ export function resultsEmail(opts: {
   return { to: opts.to, subject: title, text, html };
 }
 
+// The monthly progress report: scores then and now, what was fixed, what is
+// waiting, and who at Beqi to talk to.
+export function monthlyEmail(opts: {
+  to: string[];
+  clientName: string;
+  month: string;
+  sites: { name: string; score: number | null; scoreBefore: number | null; openFindings: number | null; openBefore: number | null; vitals: { passing: number; pages: number } | null; ai: { now: number; of: number; before: number | null } | null }[];
+  fixesApplied: string[];
+  resolved: number;
+  waiting: number;
+  audits: number;
+  leadName: string | null;
+  leadEmail: string | null;
+  appUrl: string;
+  clientId: string;
+}): EmailMessage {
+  const link = `${opts.appUrl}/clients/${opts.clientId}`;
+  const title = `${opts.month}: your site care progress`;
+  const d = (now: number | null, before: number | null) => (now == null || before == null ? "" : now - before === 0 ? " (unchanged)" : ` (${now - before > 0 ? "+" : ""}${now - before})`);
+  const siteLines = opts.sites.map((s) => {
+    const parts = [`Score ${s.score ?? "–"}/100${d(s.score, s.scoreBefore)}`];
+    if (s.openFindings != null) parts.push(`${s.openFindings} open issue${s.openFindings === 1 ? "" : "s"}${s.openBefore != null ? ` (was ${s.openBefore})` : ""}`);
+    if (s.vitals) parts.push(`Core Web Vitals pass on ${s.vitals.passing} of ${s.vitals.pages} key pages`);
+    if (s.ai) parts.push(`AI assistants mention you in ${s.ai.now} of ${s.ai.of} sampled answers${s.ai.before != null ? ` (was ${s.ai.before})` : ""}`);
+    return { name: s.name, parts };
+  });
+  const fixes = opts.fixesApplied.slice(0, 8);
+  const lead = opts.leadName ? `Your Beqi lead is ${opts.leadName}${opts.leadEmail ? ` (${opts.leadEmail})` : ""}; reply to this email with any question.` : "Reply to this email with any question.";
+  const text = `Hi,\n\nHere is what happened on your site${opts.sites.length === 1 ? "" : "s"} in ${opts.month}.\n\n${siteLines.map((s) => `${s.name}\n${s.parts.map((p) => `  - ${p}`).join("\n")}`).join("\n\n")}\n\nAudits run: ${opts.audits}\nIssues resolved: ${opts.resolved}\nFixes applied: ${opts.fixesApplied.length}${fixes.length ? "\n" + fixes.map((f) => `  - ${f}`).join("\n") : ""}\n${opts.waiting ? `\n${opts.waiting} fix${opts.waiting === 1 ? "" : "es"} waiting for your approval: ${link}/fixes\n` : ""}\nYour hub: ${link}\n\n${lead}\n\n— Beqi`;
+  const html = layout(
+    title,
+    `<p style="line-height:1.5">Here is what happened on your site${opts.sites.length === 1 ? "" : "s"} in <strong>${esc(opts.month)}</strong>.</p>
+     ${siteLines.map((s) => `<div style="margin:12px 0"><div style="font-weight:600">${esc(s.name)}</div><ul style="margin:4px 0 0;padding-left:18px;line-height:1.5;color:#3f3f3b">${s.parts.map((p) => `<li>${esc(p)}</li>`).join("")}</ul></div>`).join("")}
+     <table style="border-collapse:collapse;margin:8px 0 16px"><tr>
+       <td style="padding:8px 16px 8px 0"><div style="font-size:12px;color:#6b6b66">Audits</div><div style="font-size:22px;font-weight:600">${opts.audits}</div></td>
+       <td style="padding:8px 16px"><div style="font-size:12px;color:#6b6b66">Issues resolved</div><div style="font-size:22px;font-weight:600">${opts.resolved}</div></td>
+       <td style="padding:8px 16px"><div style="font-size:12px;color:#6b6b66">Fixes applied</div><div style="font-size:22px;font-weight:600">${opts.fixesApplied.length}</div></td>
+       <td style="padding:8px 0 8px 16px"><div style="font-size:12px;color:#6b6b66">Waiting for you</div><div style="font-size:22px;font-weight:600">${opts.waiting}</div></td>
+     </tr></table>
+     ${fixes.length ? `<div style="font-size:12px;color:#6b6b66;margin-bottom:6px">Applied this month</div><ul style="margin:0 0 16px;padding-left:18px;line-height:1.5">${fixes.map((f) => `<li>${esc(f)}</li>`).join("")}${opts.fixesApplied.length > fixes.length ? `<li>and ${opts.fixesApplied.length - fixes.length} more</li>` : ""}</ul>` : ""}
+     <p><a href="${esc(opts.waiting ? `${link}/fixes` : link)}" style="display:inline-block;background:#2a78d6;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600">${opts.waiting ? `Review ${opts.waiting} fix${opts.waiting === 1 ? "" : "es"}` : "Open your hub"}</a></p>
+     <p style="font-size:13px;color:#6b6b66;line-height:1.5">${esc(lead)}</p>`,
+    `Sent for ${esc(opts.clientName)}. Nothing on the site is changed without your approval.`,
+  );
+  return { to: opts.to, subject: title, text, html };
+}
+
 export function loginEmail(opts: { to: string; link: string; minutes: number }): EmailMessage {
   const title = "Sign in to Beqi Audit";
   return {

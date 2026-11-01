@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { canSeeClient, requireTeam } from "@/app/gate";
 import { clientDetail } from "@/lib/queries";
-import { deleteClient, disconnectWorkspace, reimportSites, removeClientLogo, sendTestEmail, updateClient, uploadClientLogo } from "@/app/actions";
+import { deleteClient, disconnectWorkspace, reimportSites, removeClientLogo, sendMonthlyReportNow, sendTestEmail, sendTestSlack, updateClient, uploadClientLogo } from "@/app/actions";
 import { emailConfigured } from "@/lib/email";
 import { getEnv } from "@/lib/env";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
@@ -93,6 +93,13 @@ export default async function ClientSettings({ params, searchParams }: { params:
                     <span className="block text-xs text-ink-3">Score, finding counts, highlights and a link to the full report.</span>
                   </span>
                 </label>
+                <label className="mt-2 flex items-start gap-2 text-sm text-ink-2">
+                  <input name="notifyMonthly" type="checkbox" defaultChecked={client.notifyMonthly} className="mt-0.5" />
+                  <span>
+                    <span className="font-medium text-ink">Monthly progress report</span>
+                    <span className="block text-xs text-ink-3">On the 1st: scores then and now, fixes applied, issues resolved, what is waiting for approval. Also posted to Slack when connected.</span>
+                  </span>
+                </label>
                 {!mailReady && <p className="mt-3 rounded-md px-2 py-1.5 text-xs tone-warn">Email sending isn&apos;t configured yet (RESEND_API_KEY / EMAIL_FROM). Settings are saved and used once it is.</p>}
               </fieldset>
               <fieldset className="rounded-lg border border-line p-3">
@@ -101,12 +108,34 @@ export default async function ClientSettings({ params, searchParams }: { params:
                   Incoming webhook URL
                 </label>
                 <input id="slackWebhookUrl" name="slackWebhookUrl" type="url" defaultValue={client.slackWebhookUrl ?? ""} className={inputCls} placeholder="https://hooks.slack.com/services/…" />
-                <p className="mt-1 text-xs text-ink-3">Audit results and applied fixes are posted to this channel (the client&apos;s shared channel, or an internal one). Leave empty for none.</p>
+                <p className="mt-1 text-xs text-ink-3">Audit results, applied fixes and the monthly report are posted to this channel (the client&apos;s shared channel, or an internal one). Leave empty for none.</p>
               </fieldset>
               <SubmitButton className={btnPrimary} pendingLabel="Saving…">
                 Save changes
               </SubmitButton>
             </form>
+            {client.slackWebhookUrl && (
+              <form action={sendTestSlack} className="border-t border-line px-5 py-3">
+                <input type="hidden" name="clientId" value={client.id} />
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span className="text-ink-2">Slack channel connected</span>
+                  <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Posting…">
+                    Post a test message
+                  </SubmitButton>
+                </div>
+              </form>
+            )}
+            {(client.notifyEmail || client.slackWebhookUrl) && (
+              <form action={sendMonthlyReportNow} className="border-t border-line px-5 py-3">
+                <input type="hidden" name="clientId" value={client.id} />
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span className="text-ink-2">Last month&apos;s progress report, sent now</span>
+                  <SubmitButton className={`${btnSecondary} ${btnSm}`} pendingLabel="Sending…" confirm="Send last month's progress report to the client's email and Slack now?">
+                    Send monthly report
+                  </SubmitButton>
+                </div>
+              </form>
+            )}
             {client.notifyEmail && (
               <form action={sendTestEmail} className="border-t border-line px-5 py-3">
                 <input type="hidden" name="clientId" value={client.id} />

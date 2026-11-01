@@ -76,6 +76,10 @@ export const clients = sqliteTable("clients", {
   leadEmail: text("lead_email"),
   // Slack incoming webhook for the shared client channel; null = no Slack.
   slackWebhookUrl: text("slack_webhook_url"),
+  // A progress report on the first of each month (email and Slack).
+  notifyMonthly: integer("notify_monthly", { mode: "boolean" }).notNull().default(true),
+  // "YYYY-MM" of the last monthly report, so a tick never sends it twice.
+  monthlyReportSentFor: text("monthly_report_sent_for"),
   createdAt: text("created_at").notNull().default(now),
 });
 
