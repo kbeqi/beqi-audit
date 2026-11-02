@@ -60,7 +60,7 @@ export function ProgressCard({ progress, clientId, label, audience = "team", tra
           {scored.map((s) => (
             <li key={s.siteId} className="flex items-center justify-between gap-4">
               <div className="min-w-0">
-                <Link href={`/sites/${s.siteId}`} className="text-sm font-medium text-ink hover:underline">
+                <Link href={`/clients/${clientId}`} className="text-sm font-medium text-ink hover:underline">
                   {s.name}
                 </Link>
                 <div className="text-xs text-ink-3">

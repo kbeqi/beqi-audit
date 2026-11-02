@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { canSeeClient, requireTeam } from "@/app/gate";
-import { clientDetail } from "@/lib/queries";
-import { deleteClient, disconnectGoogle, disconnectWorkspace, reimportSites, removeClientLogo, sendMonthlyReportNow, sendTestEmail, sendTestSlack, updateClient, uploadClientLogo } from "@/app/actions";
+import { clientDetail, primarySite, siteDetail } from "@/lib/queries";
+import { SiteSettingsForm } from "@/components/site-settings-form";
+import { listWebflowSites, siteBaseUrl } from "@/lib/webflow/mcp-client";
+import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
+import { chooseSite, deleteClient, disconnectGoogle, disconnectWorkspace, reimportSites, removeClientLogo, sendMonthlyReportNow, sendTestEmail, sendTestSlack, updateClient, uploadClientLogo } from "@/app/actions";
 import { googleConfigured } from "@/lib/google/oauth";
 import { emailConfigured } from "@/lib/email";
 import { appUrl, getEnv } from "@/lib/env";
@@ -21,7 +24,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return { title: data ? `${data.client.name} · Settings` : "Settings" };
 }
 
-export default async function ClientSettings({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch> }) {
+export default async function ClientSettings({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch & { choose?: string }> }) {
   const { id } = await params;
   await requireTeam(`/clients/${id}/settings`);
   const q = await searchParams;
@@ -31,15 +34,56 @@ export default async function ClientSettings({ params, searchParams }: { params:
   const data = await clientDetail(id);
   if (!data) notFound();
   const { client, sites, connections, googleConnection } = data;
-  const linkedSites = sites.filter((s) => s.site.gscProperty || s.site.ga4Property);
+  const site = primarySite(sites.map((s) => s.site));
+  const detail = site ? await siteDetail(site.id) : null;
   const active = connections.filter((c) => !c.revokedAt);
+  // The workspace has several sites and none is this client's yet: offer the list.
+  const chooseFrom = q.choose ? active.find((c) => c.id === q.choose) : undefined;
+  let choices: { id: string; name: string; host: string }[] = [];
+  let chooseError: string | null = null;
+  if (chooseFrom) {
+    try {
+      const fresh = await ensureFreshConnection(env, chooseFrom);
+      choices = (await listWebflowSites(fresh.mcpServerUrl ?? env.WEBFLOW_MCP_URL, fresh.accessToken)).map((w) => ({ id: w.id, name: w.displayName, host: siteBaseUrl(w).replace(/^https?:\/\//, "") }));
+    } catch (e) {
+      chooseError = String((e as Error).message ?? e).slice(0, 200);
+    }
+  }
   const logoUrl = client.logoKey ? `/api/clients/${client.id}/logo?v=${encodeURIComponent(client.logoUpdatedAt ?? "")}` : null;
 
   return (
     <div className="space-y-6">
       <ClientNotices q={q} />
+      {chooseFrom && (
+        <Card>
+          <CardHeader title="Which site is this client's?" description="The workspace has several sites. Each client has one; pick it and it is imported with its publish webhook." />
+          {chooseError ? (
+            <p className="p-5 text-sm text-critical-text">Could not list the workspace&apos;s sites: {chooseError}</p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {choices.map((c) => (
+                <li key={c.id} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
+                  <div>
+                    <div className="font-medium text-ink">{c.name}</div>
+                    <div className="text-xs text-ink-3">{c.host}</div>
+                  </div>
+                  <form action={chooseSite}>
+                    <input type="hidden" name="connectionId" value={chooseFrom.id} />
+                    <input type="hidden" name="clientId" value={client.id} />
+                    <input type="hidden" name="webflowSiteId" value={c.id} />
+                    <SubmitButton className={`${btnPrimary} ${btnSm}`} pendingLabel="Importing…">
+                      This one
+                    </SubmitButton>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
+          {site && detail && <SiteSettingsForm site={site} ignoreRules={detail.ignoreRules} googleConnection={googleConnection} />}
           <Card>
             <CardHeader title="Client details" />
             <form action={updateClient} className="space-y-3 p-5">
@@ -203,7 +247,7 @@ export default async function ClientSettings({ params, searchParams }: { params:
               }
             />
             {connections.length === 0 ? (
-              <EmptyState title="Not connected" body="A Beqi team member with access to the client's workspace authorizes it once. No Webflow app install is needed." />
+              <EmptyState title="Not connected" body="A Beqi team member with access to the client's workspace authorizes it once; the client's site is imported from it. No Webflow app install is needed." />
             ) : (
               <ul className="divide-y divide-line">
                 {connections.map((c) => (
@@ -220,8 +264,8 @@ export default async function ClientSettings({ params, searchParams }: { params:
                         <form action={reimportSites}>
                           <input type="hidden" name="connectionId" value={c.id} />
                           <input type="hidden" name="clientId" value={client.id} />
-                          <SubmitButton className={`${btnSecondary} ${btnSm}`} title="Read the workspace's site list again" pendingLabel="Importing…">
-                            Re-import sites
+                          <SubmitButton className={`${btnSecondary} ${btnSm}`} title="Read the workspace again and re-link the client's site" pendingLabel="Importing…">
+                            Re-import
                           </SubmitButton>
                         </form>
                         <form action={disconnectWorkspace}>
@@ -269,7 +313,7 @@ export default async function ClientSettings({ params, searchParams }: { params:
                   <div>
                     <div className="font-medium text-ink">{googleConnection.googleEmail ?? "Google account"}</div>
                     <div className="text-xs text-ink-3">
-                      by {googleConnection.authorizedBy ?? "—"} · {fmtDay(googleConnection.createdAt)} · {linkedSites.length ? `${linkedSites.length} of ${sites.length} site${sites.length === 1 ? "" : "s"} linked` : "no site linked yet"}
+                      by {googleConnection.authorizedBy ?? "—"} · {fmtDay(googleConnection.createdAt)} · {site && (site.gscProperty || site.ga4Property) ? "properties linked" : "no property linked yet"}
                     </div>
                   </div>
                   <form action={disconnectGoogle}>
@@ -280,23 +324,11 @@ export default async function ClientSettings({ params, searchParams }: { params:
                   </form>
                 </div>
                 <p className="mt-2 text-xs text-ink-3">
-                  Pick the Search Console and GA4 property per site in each site&apos;s settings
-                  {sites.length ? (
-                    <>
-                      {" "}
-                      (
-                      {sites.map((s, i) => (
-                        <span key={s.site.id}>
-                          {i > 0 ? ", " : ""}
-                          <Link href={`/sites/${s.site.id}`} className="text-accent hover:underline">
-                            {s.site.name}
-                          </Link>
-                        </span>
-                      ))}
-                      )
-                    </>
-                  ) : null}
-                  . The account needs at least read access to those properties; the client&apos;s own account, or a Beqi account they added, both work.
+                  Pick the Search Console and GA4 property in the{" "}
+                  <Link href="#site" className="text-accent underline">
+                    Site settings
+                  </Link>{" "}
+                  on the left. The account needs at least read access to those properties; the client&apos;s own account, or a Beqi account they added, both work.
                 </p>
               </div>
             ) : (
@@ -315,7 +347,7 @@ export default async function ClientSettings({ params, searchParams }: { params:
             <CardHeader title="Danger zone" />
             <div className="p-5">
               <p className="text-sm text-ink-2">
-                Deleting the client removes its {sites.length} site{sites.length === 1 ? "" : "s"}, every audit, finding and fix proposal, and its Webflow connections. Nothing is changed in Webflow.
+                Deleting the client removes its site, every audit, finding and fix proposal, and its Webflow and Google connections. Nothing is changed in Webflow.
               </p>
               <form action={deleteClient} className="mt-3">
                 <input type="hidden" name="clientId" value={client.id} />

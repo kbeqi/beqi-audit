@@ -34,7 +34,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     <div className="space-y-6">
       <PageHeader
         title="Portfolio"
-        description={`${clients.length} client${clients.length === 1 ? "" : "s"} · ${allSites.length} site${allSites.length === 1 ? "" : "s"} under audit`}
+        description={`${clients.length} client${clients.length === 1 ? "" : "s"} under care`}
         actions={
           <Link href="/clients/new" className={btnPrimary}>
             Add client
@@ -48,7 +48,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <Card>
           <EmptyState
             title="No sites yet"
-            body="Add a client, then connect their Webflow workspace. Every site in the workspace is imported and scheduled for a weekly audit."
+            body="Add a client, then connect their Webflow workspace; their site is imported from it."
             action={
               <Link href="/clients/new" className={btnPrimary}>
                 Add your first client
@@ -86,7 +86,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                   <li key={s.site.id} className="flex items-center gap-4 px-5 py-3">
                     <ScoreRing score={s.latest?.scoreOverall} size="sm" />
                     <div className="min-w-0 flex-1">
-                      <Link href={`/sites/${s.site.id}`} className="text-sm font-medium text-ink hover:underline">
+                      <Link href={`/clients/${s.site.clientId}`} className="text-sm font-medium text-ink hover:underline">
                         {s.site.name}
                       </Link>
                       <div className="text-xs text-ink-3">{hostOf(s.site.baseUrl)}</div>
@@ -143,7 +143,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                       {sites.map((s) => (
                         <tr key={s.site.id}>
                           <td>
-                            <Link href={`/sites/${s.site.id}`} className="font-medium text-ink hover:underline">
+                            <Link href={`/clients/${s.site.clientId}`} className="font-medium text-ink hover:underline">
                               {s.site.name}
                             </Link>
                             <div className="text-xs text-ink-3">{hostOf(s.site.baseUrl)}</div>

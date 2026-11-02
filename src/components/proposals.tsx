@@ -173,7 +173,7 @@ export function ProposalRow({ proposal, site, back, compact = false, role = "tea
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-ink-3">
             {site && (
-              <Link href={`/sites/${site.id}`} className="hover:underline">
+              <Link href={`/clients/${site.clientId}`} className="hover:underline">
                 {site.name}
               </Link>
             )}

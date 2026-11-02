@@ -19,7 +19,6 @@ export function ClientTabs({ clientId, counts, showSettings = true }: { clientId
     { href: base, label: "Overview", exact: true },
     { href: `${base}/audits`, label: "Audits", badge: counts.running ? "live" : counts.audits || undefined, live: counts.running },
     { href: `${base}/fixes`, label: "Fixes", badge: counts.pendingFixes || undefined, warn: counts.pendingFixes > 0 },
-    { href: `${base}/sites`, label: "Sites", badge: counts.sites || undefined },
     { href: `${base}/ai`, label: "AI answers" },
     ...(showSettings ? [{ href: `${base}/settings`, label: "Settings" }] : []),
   ];

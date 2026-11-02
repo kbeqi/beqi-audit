@@ -71,7 +71,7 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
                 {site.name}
               </h2>
               {team && (
-                <Link href={`/sites/${site.id}#settings`} className="text-xs font-medium text-accent hover:underline">
+                <Link href={`/clients/${id}/settings#site`} className="text-xs font-medium text-accent hover:underline">
                   {site.aiPrompts?.length ? `Question set: ${site.aiPrompts.length} fixed` : "No fixed question set yet: agree one"} · {site.aiSampleEvery === "monthly" ? "monthly" : site.aiSampleEvery === "audit" ? "every audit" : "off"}
                 </Link>
               )}

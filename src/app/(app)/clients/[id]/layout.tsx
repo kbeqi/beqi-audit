@@ -19,6 +19,7 @@ export default async function ClientLayout({ params, children }: { params: Promi
   const h = await clientHeader(id);
   if (!h) notFound();
   const { client, siteCount, connectedCount, running, pendingFixes, hasCompleted, lostConnections } = h;
+  void siteCount;
   const logoUrl = client.logoKey ? `/api/clients/${client.id}/logo?v=${encodeURIComponent(client.logoUpdatedAt ?? "")}` : null;
   const allRunning = connectedCount > 0 && running.length >= connectedCount;
 
@@ -37,14 +38,20 @@ export default async function ClientLayout({ params, children }: { params: Promi
             <h1 className="text-2xl font-semibold tracking-tight text-ink">{client.name}</h1>
           )}
           <div className="mt-1 text-sm text-ink-3">
-            {siteCount} site{siteCount === 1 ? "" : "s"}
-            {team ? (connectedCount ? ` · ${connectedCount} connected to Webflow` : " · Webflow not connected") : client.leadName ? ` · your Beqi lead: ${client.leadName}` : " · looked after by Beqi"}
+            {h.siteHost ? (
+              <a href={`https://${h.siteHost}`} target="_blank" rel="noreferrer" className="text-accent underline decoration-line-2 underline-offset-2 hover:decoration-accent">
+                {h.siteHost}
+              </a>
+            ) : (
+              "No site yet"
+            )}
+            {team ? (connectedCount ? " · connected to Webflow" : " · Webflow not connected") : client.leadName ? ` · your Beqi lead: ${client.leadName}` : " · looked after by Beqi"}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {running.length > 0 && (
             <Link href={`/runs/${running[0].id}`} className={btnSecondary}>
-              <StatusPill status="running" /> {running.length === 1 ? "View progress" : `${running.length} running`}
+              <StatusPill status="running" /> View progress
             </Link>
           )}
           {team && (
@@ -54,7 +61,7 @@ export default async function ClientLayout({ params, children }: { params: Promi
                 className={btnPrimary}
                 disabled={connectedCount === 0 || allRunning}
                 pendingLabel="Starting…"
-                title={connectedCount === 0 ? "Connect the client's Webflow workspace first (Settings)" : connectedCount > 1 ? `Audits every connected site (${connectedCount})` : undefined}
+                title={connectedCount === 0 ? "Connect the client's Webflow workspace first (Settings)" : undefined}
               >
                 {allRunning ? "Audit running" : hasCompleted ? "Audit now" : connectedCount ? "Run first audit" : "Audit now"}
               </SubmitButton>

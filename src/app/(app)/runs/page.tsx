@@ -40,7 +40,7 @@ export default async function RunsPage() {
                     </td>
                     <td>
                       {r.site ? (
-                        <Link href={`/sites/${r.site.id}`} className="font-medium text-ink hover:underline">
+                        <Link href={`/clients/${r.site.clientId}`} className="font-medium text-ink hover:underline">
                           {r.site.name}
                         </Link>
                       ) : (

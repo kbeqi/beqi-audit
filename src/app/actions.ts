@@ -245,8 +245,9 @@ export async function updateSiteSettings(formData: FormData) {
         }
       }
     }
-    revalidatePath(`/sites/${siteId}`);
-    redirect(`/sites/${siteId}?saved=1`);
+    const owner = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId), columns: { clientId: true } });
+    revalidatePath(`/clients/${owner?.clientId}`, "layout");
+    redirect(`/clients/${owner?.clientId}/settings?saved=1#site`);
   });
 }
 
@@ -376,8 +377,9 @@ export async function deleteIgnoreRule(formData: FormData) {
     const siteId = String(formData.get("siteId"));
     const db = await getDb();
     await db.delete(schema.ignoreRules).where(eq(schema.ignoreRules.id, id));
-    revalidatePath(`/sites/${siteId}`);
-    redirect(`/sites/${siteId}`);
+    const owner = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId), columns: { clientId: true } });
+    revalidatePath(`/clients/${owner?.clientId}`, "layout");
+    redirect(`/clients/${owner?.clientId}/settings#site`);
   });
 }
 
@@ -478,15 +480,36 @@ export async function reimportSites(formData: FormData) {
     if (!connection || connection.revokedAt) throw new Error("Connection not found");
     try {
       const fresh = await ensureFreshConnection(env, connection);
-      const { imported } = await importSitesForConnection(db, fresh, env);
-      await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId: id, sites: imported } });
+      const { imported, choices } = await importSitesForConnection(db, fresh, env);
+      await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId: id, sites: imported, choices: choices.length } });
+      if (imported === 0 && choices.length > 1) redirect(`/clients/${clientId}/settings?choose=${id}`);
     } catch (e) {
+      if (isRedirectError(e)) throw e;
       const message = (e as Error).message ?? String(e);
       await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId: id, error: message.slice(0, 500) } });
       redirect(`/clients/${clientId}/settings?error=${encodeURIComponent(message.slice(0, 200))}`);
     }
     revalidatePath(`/clients/${clientId}`, "layout");
-    redirect(`/clients/${clientId}/sites?imported=1`);
+    redirect(`/clients/${clientId}?imported=1`);
+  });
+}
+
+// The workspace has several sites: the team picks the one that is this client's.
+export async function chooseSite(formData: FormData) {
+  return guarded("chooseSite", async () => {
+    const actor = (await teamActor()).email;
+    const id = String(formData.get("connectionId"));
+    const clientId = String(formData.get("clientId"));
+    const webflowSiteId = String(formData.get("webflowSiteId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const connection = await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, id) });
+    if (!connection || connection.revokedAt) throw new Error("Connection not found");
+    const fresh = await ensureFreshConnection(env, connection);
+    const { imported } = await importSitesForConnection(db, fresh, env, webflowSiteId);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId: id, sites: imported, chosen: webflowSiteId } });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    redirect(`/clients/${clientId}?connected=${imported}`);
   });
 }
 
@@ -560,12 +583,12 @@ export async function syncGoogleNow(formData: FormData) {
     const { env } = await getCtx();
     const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
     if (!site) throw new Error("Site not found");
-    if (!site.gscProperty && !site.ga4Property) redirect(`/sites/${siteId}?error=${encodeURIComponent("Link a Search Console or GA4 property in the site settings first.")}`);
+    if (!site.gscProperty && !site.ga4Property) redirect(`/clients/${site.clientId}/settings?error=${encodeURIComponent("Link a Search Console or GA4 property in the site settings first.")}#site`);
     const r = await syncSiteStats(env, site, 120);
     await db.update(schema.sites).set({ statsSyncedFor: new Date().toISOString().slice(0, 10) }).where(eq(schema.sites.id, siteId));
-    revalidatePath(`/sites/${siteId}`);
-    if (r.errors.length) redirect(`/sites/${siteId}?error=${encodeURIComponent(r.errors.join(" · "))}`);
-    redirect(`/sites/${siteId}?notice=${encodeURIComponent(`Google data synced: ${r.gsc ?? 0} Search Console rows, ${r.ga4 ?? 0} GA4 rows, ${r.ai ?? 0} AI-referral rows.`)}`);
+    revalidatePath(`/clients/${site.clientId}`);
+    if (r.errors.length) redirect(`/clients/${site.clientId}?error=${encodeURIComponent(r.errors.join(" · "))}`);
+    redirect(`/clients/${site.clientId}?notice=${encodeURIComponent(`Google data synced: ${r.gsc ?? 0} Search Console rows, ${r.ga4 ?? 0} GA4 rows, ${r.ai ?? 0} AI-referral rows.`)}`);
   });
 }
 
@@ -582,7 +605,7 @@ export async function adoptAiPrompt(formData: FormData) {
     if (!set.includes(prompt) && set.length < 15) set.push(prompt);
     await db.update(schema.sites).set({ aiPrompts: set, aiPromptCandidates: (site.aiPromptCandidates ?? []).filter((c) => c !== prompt) }).where(eq(schema.sites.id, siteId));
     await log("site.settings_updated", { aiPrompts: set.length, adopted: prompt }, siteId);
-    revalidatePath(`/sites/${siteId}`);
-    redirect(`/sites/${siteId}?notice=${encodeURIComponent("Question added to the set.")}#settings`);
+    revalidatePath(`/clients/${site.clientId}/settings`);
+    redirect(`/clients/${site.clientId}/settings?notice=${encodeURIComponent("Question added to the set.")}#site`);
   });
 }

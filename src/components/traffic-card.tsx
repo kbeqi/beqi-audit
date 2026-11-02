@@ -41,7 +41,7 @@ export function TrafficCard({ summary, fixedPages, siteId, siteName, linked, goo
         <CardHeader title="Search & traffic" description="Clicks from Google search, visits, and visits from AI assistants, measured from Search Console and GA4" />
         <EmptyState
           title={client ? "Measurement is being set up" : googleConnected ? "Pick the properties for this site" : "Connect Google to measure results"}
-          body={client ? "Once Beqi links this site's Search Console and GA4, this card shows clicks, visits and AI referrals, and what changed after each fix." : googleConnected ? "Choose the Search Console and GA4 property in the settings below; the last 120 days are pulled right away." : "Connect the client's Google account in the client Settings (read-only Search Console and GA4), then pick the properties here."}
+          body={client ? "Once Beqi links this site's Search Console and GA4, this card shows clicks, visits and AI referrals, and what changed after each fix." : googleConnected ? "Choose the Search Console and GA4 property in the Settings tab; the last 120 days are pulled right away." : "Connect the client's Google account in Settings (read-only Search Console and GA4), then pick the properties there."}
         />
       </Card>
     );

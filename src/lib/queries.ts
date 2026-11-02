@@ -25,6 +25,13 @@ export interface ClientCard {
 const OPEN_PROPOSAL_STATUSES = ["proposed", "client_approved", "approved", "applying"] as const;
 const SUPPRESSED = new Set(["ignored", "false_positive", "fixed"]);
 
+// Each client has one site. Older data may still hold several; the one that
+// is connected and most recently audited is the client's site.
+export function primarySite(sites: Site[]): Site | null {
+  if (sites.length === 0) return null;
+  return [...sites].sort((a, b) => Number(!!b.connectionId) - Number(!!a.connectionId) || (b.lastRunId ? 1 : 0) - (a.lastRunId ? 1 : 0) || a.createdAt.localeCompare(b.createdAt))[0];
+}
+
 // Small helper for D1's bound-parameter cap.
 async function chunked<T, R>(items: T[], size: number, fn: (chunk: T[]) => Promise<R[]>): Promise<R[]> {
   const out: R[] = [];
@@ -240,7 +247,9 @@ export async function clientHeader(clientId: string) {
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
   if (!client) return null;
-  const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id), columns: { id: true, connectionId: true } });
+  const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id) });
+  const primary = primarySite(sites);
+  const siteHost = primary ? new URL(primary.baseUrl).host : null;
   const siteIds = sites.map((s) => s.id);
   const [live, pending] = siteIds.length
     ? await Promise.all([
@@ -259,7 +268,7 @@ export async function clientHeader(clientId: string) {
   });
   const nowIso = new Date().toISOString();
   const lostConnections = activeConnections.filter((c) => c.expiresAt && c.expiresAt <= nowIso).length;
-  return { client, siteCount: sites.length, connectedCount: sites.filter((s) => s.connectionId).length, running: live, pendingFixes: pending.length, hasCompleted, lostConnections };
+  return { client, siteHost, siteCount: sites.length, connectedCount: sites.filter((s) => s.connectionId).length, running: live, pendingFixes: pending.length, hasCompleted, lostConnections };
 }
 
 export async function proposalDetail(proposalId: string) {

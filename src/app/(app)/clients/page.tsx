@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireTeam } from "@/app/gate";
 import { dashboardData } from "@/lib/queries";
-import { Card, CardHeader, EmptyState, Notice, PageHeader, ScoreRing, btnPrimary, hostOf } from "@/components/ui";
+import { Card, CardHeader, EmptyState, Notice, PageHeader, ScoreRing, btnPrimary, hostOf, timeAgo } from "@/components/ui";
+
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Clients" };
@@ -15,7 +16,7 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
     <div className="space-y-6">
       <PageHeader
         title="Clients"
-        description="Each client has one or more connected Webflow workspaces; every site in a workspace is audited."
+        description="One site per client, imported from their connected Webflow workspace."
         actions={
           <Link href="/clients/new" className={btnPrimary}>
             Add client
@@ -30,28 +31,17 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {clients.map(({ client, sites, connected }) => {
-            const scored = sites.filter((s) => s.latest?.scoreOverall != null);
-            const avg = scored.length ? Math.round(scored.reduce((a, s) => a + (s.latest!.scoreOverall ?? 0), 0) / scored.length) : null;
+            const s = sites[0];
             return (
               <Card key={client.id}>
                 <CardHeader
                   title={client.name}
-                  description={connected ? `${sites.length} site${sites.length === 1 ? "" : "s"}` : "Webflow not connected"}
-                  actions={<ScoreRing score={avg} size="md" label={avg == null ? "No audits" : `Average score ${avg}`} />}
+                  description={s ? hostOf(s.site.baseUrl) : connected ? "No site chosen yet" : "Webflow not connected"}
+                  actions={<ScoreRing score={s?.latest?.scoreOverall ?? null} size="md" label={s?.latest?.scoreOverall == null ? "No audits" : `Score ${s.latest.scoreOverall}`} />}
                 />
-                <ul className="divide-y divide-line">
-                  {sites.slice(0, 5).map((s) => (
-                    <li key={s.site.id} className="flex items-center justify-between gap-3 px-5 py-2 text-sm">
-                      <Link href={`/sites/${s.site.id}`} className="min-w-0 truncate font-medium text-ink hover:underline">
-                        {s.site.name}
-                      </Link>
-                      <span className="truncate text-xs text-ink-3">{hostOf(s.site.baseUrl)}</span>
-                    </li>
-                  ))}
-                  {sites.length > 5 && <li className="px-5 py-2 text-xs text-ink-3">+{sites.length - 5} more</li>}
-                </ul>
-                <div className="border-t border-line px-5 py-2.5">
-                  <Link href={`/clients/${client.id}`} className="text-xs font-medium text-accent hover:underline">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-2.5 text-xs text-ink-3">
+                  <span>{s?.latest ? `Last audit ${timeAgo(s.latest.finishedAt)} · ${s.openFindings} open finding${s.openFindings === 1 ? "" : "s"}${s.pendingFixes ? ` · ${s.pendingFixes} fix${s.pendingFixes === 1 ? "" : "es"} to review` : ""}` : "No audit yet"}</span>
+                  <Link href={`/clients/${client.id}`} className="font-medium text-accent hover:underline">
                     Open client →
                   </Link>
                 </div>

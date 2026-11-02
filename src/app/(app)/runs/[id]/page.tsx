@@ -239,7 +239,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
             items={[
               { k: "Run id", v: <span className="font-mono text-xs">{run.id}</span> },
               { k: "Workflow", v: <span className="font-mono text-xs">{run.workflowInstanceId ?? "inline"}</span> },
-              { k: "Site", v: <Link href={`/sites/${site.id}`} className="text-accent hover:underline">{site.name}</Link> },
+              { k: "Site", v: <Link href={`/clients/${site.clientId}`} className="text-accent hover:underline">{site.name}</Link> },
               { k: "Model", v: run.model ?? "—" },
               { k: "API calls", v: run.usage?.apiCalls ?? "—" },
               { k: "Web fetches", v: run.usage?.webFetches ?? "—" },

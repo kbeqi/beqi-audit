@@ -9,12 +9,27 @@ import type { Site, WebflowConnection } from "@/db/schema";
 import { newId, randomToken } from "@/lib/id";
 import { appUrl } from "@/lib/env";
 import { nextRunAfter } from "@/audit/start";
-import { WebflowSession, listWebflowSites, siteBaseUrl } from "./mcp-client";
+import { WebflowSession, listWebflowSites, siteBaseUrl, type McpSite } from "./mcp-client";
 
 type ImportEnv = Pick<CloudflareEnv, "WEBFLOW_MCP_URL" | "APP_URL">;
 
-export async function importSitesForConnection(db: Db, connection: WebflowConnection, env: ImportEnv): Promise<{ imported: number; workspaceId: string | null; webhooks: number }> {
-  const sites = await listWebflowSites(connection.mcpServerUrl ?? env.WEBFLOW_MCP_URL, connection.accessToken);
+// One site per client. The workspace's site list is read; the client's site is
+// the one already on record (re-linked), the only site in the workspace, or the
+// one chosen (`chooseWebflowSiteId`) when the workspace has several. In that
+// last case nothing is imported and `choices` lists the options.
+export async function importSitesForConnection(db: Db, connection: WebflowConnection, env: ImportEnv, chooseWebflowSiteId?: string): Promise<{ imported: number; workspaceId: string | null; webhooks: number; choices: McpSite[] }> {
+  const all = await listWebflowSites(connection.mcpServerUrl ?? env.WEBFLOW_MCP_URL, connection.accessToken);
+  const current = await db.query.sites.findMany({ where: eq(schema.sites.clientId, connection.clientId) });
+  let sites: McpSite[];
+  if (chooseWebflowSiteId) sites = all.filter((s) => s.id === chooseWebflowSiteId);
+  else if (current.some((c) => all.some((s) => s.id === c.webflowSiteId))) sites = all.filter((s) => current.some((c) => c.webflowSiteId === s.id)).slice(0, 1);
+  else if (all.length === 1) sites = all;
+  else sites = [];
+  const choices = sites.length === 0 && all.length > 1 ? all : [];
+  await db
+    .update(schema.webflowConnections)
+    .set({ authorizedSiteIds: all.map((s) => s.id), workspaceId: all[0]?.workspaceId ?? connection.workspaceId, label: all[0]?.workspaceId ? `Workspace ${all[0].workspaceId.slice(-6)}` : connection.label })
+    .where(eq(schema.webflowConnections.id, connection.id));
   let imported = 0;
   const rows: Site[] = [];
   for (const s of sites) {
@@ -45,15 +60,7 @@ export async function importSitesForConnection(db: Db, connection: WebflowConnec
     }
     imported++;
   }
-  const workspaceId = sites[0]?.workspaceId ?? null;
-  await db
-    .update(schema.webflowConnections)
-    .set({
-      authorizedSiteIds: sites.map((s) => s.id),
-      workspaceId: workspaceId ?? connection.workspaceId,
-      label: workspaceId ? `Workspace ${workspaceId.slice(-6)}` : connection.label,
-    })
-    .where(eq(schema.webflowConnections.id, connection.id));
+  const workspaceId = all[0]?.workspaceId ?? null;
 
   // Publish webhooks: best effort, one session for all sites. A failure here
   // never fails the import; saving the site's settings retries it.
@@ -77,7 +84,7 @@ export async function importSitesForConnection(db: Db, connection: WebflowConnec
       await session?.close();
     }
   }
-  return { imported, workspaceId, webhooks };
+  return { imported, workspaceId, webhooks, choices };
 }
 
 // Registers (once) the site_publish webhook for one site.

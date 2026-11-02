@@ -25,7 +25,6 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${appUrl(env, request)}/?error=${encodeURIComponent("The Webflow authorization did not complete (state mismatch). Try again.")}`);
   }
   const clientId = pending.clientId;
-  const back = `${appUrl(env, request)}/clients/${clientId}/sites`;
   const actor = (await teamActor()).email;
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
@@ -64,9 +63,10 @@ export async function GET(request: Request) {
 
   try {
     const connection = (await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, connectionId) }))!;
-    const { imported } = await importSitesForConnection(db, connection, env);
-    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId, sites: imported } });
-    return NextResponse.redirect(`${back}?connected=${imported}`);
+    const { imported, choices } = await importSitesForConnection(db, connection, env);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId, sites: imported, choices: choices.length } });
+    if (imported === 0 && choices.length > 1) return NextResponse.redirect(`${appUrl(env, request)}/clients/${clientId}/settings?choose=${connectionId}`);
+    return NextResponse.redirect(`${appUrl(env, request)}/clients/${clientId}?connected=${imported}`);
   } catch (e) {
     const message = (e as Error).message ?? String(e);
     await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId, error: message.slice(0, 500) } });
