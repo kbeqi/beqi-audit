@@ -38,9 +38,13 @@ export interface Actor {
   email: string;
   name: string | null;
   role: UserRole;
+  // For role "client": the client this person belongs to.
+  clientId: string | null;
   userId: string | null;
   via: "session" | "access" | "open" | "dev";
 }
+
+export const isTeam = (a: Actor | null | undefined) => !!a && (a.role === "admin" || a.role === "member");
 
 export function isLocalDev(env: Pick<CloudflareEnv, "APP_URL">): boolean {
   return !env.APP_URL || /localhost|127\.0\.0\.1/.test(env.APP_URL);
@@ -168,22 +172,43 @@ export async function currentActorOrNull(): Promise<Actor | null> {
     const email = h.get("cf-access-authenticated-user-email");
     if (!email) return null;
     const user = await userForEmail(env, email);
-    return user ? { email: user.email, name: user.name, role: user.role, userId: user.id, via: "access" } : null;
+    return user ? { email: user.email, name: user.name, role: user.role, clientId: user.clientId ?? null, userId: user.id, via: "access" } : null;
   }
   if (mode === "app") {
     const jar = await cookies();
     const user = await userForSession(env, jar.get(SESSION_COOKIE)?.value);
-    return user ? { email: user.email, name: user.name, role: user.role, userId: user.id, via: "session" } : null;
+    return user ? { email: user.email, name: user.name, role: user.role, clientId: user.clientId ?? null, userId: user.id, via: "session" } : null;
   }
   // "open"
-  if (isLocalDev(env)) return { email: "dev@local", name: "Local dev", role: "admin", userId: null, via: "dev" };
-  return { email: "open-access", name: null, role: "admin", userId: null, via: "open" };
+  if (isLocalDev(env)) return { email: "dev@local", name: "Local dev", role: "admin", clientId: null, userId: null, via: "dev" };
+  return { email: "open-access", name: null, role: "admin", clientId: null, userId: null, via: "open" };
 }
 
 export async function currentActor(): Promise<string> {
   const actor = await currentActorOrNull();
   if (!actor) throw new UnauthenticatedError();
   return actor.email;
+}
+
+// A full actor, for actions that behave differently per role.
+export async function currentActorFull(): Promise<Actor> {
+  const actor = await currentActorOrNull();
+  if (!actor) throw new UnauthenticatedError();
+  return actor;
+}
+
+// Actions and routes that only the Beqi team may use (everything except
+// reviewing a fix proposal, which clients do under their own rules).
+export async function teamActor(): Promise<Actor> {
+  const actor = await currentActorOrNull();
+  if (!actor) throw new UnauthenticatedError();
+  if (!isTeam(actor)) throw new ForbiddenError("This needs a Beqi team member.");
+  return actor;
+}
+
+// True when a client user may see this site (the team always may).
+export async function actorCanSeeSite(actor: Actor, siteClientId: string): Promise<boolean> {
+  return isTeam(actor) || actor.clientId === siteClientId;
 }
 
 export async function requireAdmin(): Promise<Actor> {

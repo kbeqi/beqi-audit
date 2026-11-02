@@ -3,7 +3,7 @@ import type { FixProposal, Site } from "@/db/schema";
 import type { FixAction } from "@/agent/catalog";
 import { decideProposal } from "@/app/actions";
 import { SubmitButton } from "./submit-button";
-import { ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
+import { EffortPill, ProposalStatusPill, RiskPill, btnPrimary, btnSecondary, btnSm, timeAgo } from "./ui";
 
 export const ACTION_LABELS: Record<FixAction, string> = {
   page_seo: "Page SEO settings",
@@ -14,6 +14,7 @@ export const ACTION_LABELS: Record<FixAction, string> = {
   custom_code: "Custom code",
   remove_script: "Remove script",
   image_compress: "Compress images",
+  content_text: "Page text",
   manual: "Manual",
 };
 
@@ -31,6 +32,7 @@ export const ACTION_NOTES: Partial<Record<FixAction, string>> = {
   custom_code: "Edits head/footer code; goes live on the next publish.",
   remove_script: "Removes an applied script; goes live on the next publish.",
   image_compress: "Replaces the asset file in place and cannot be undone from here. Keep an original copy. Webflow refuses the conversion if it would not be smaller.",
+  content_text: "Replaces the text of one heading or paragraph on the page (visible to visitors); goes live on the next publish.",
 };
 
 // JSON values (schema markup) are shown pretty-printed; everything else as text.
@@ -61,7 +63,7 @@ export function ChangeDiff({ changes }: { changes: { field: string; from: string
           <dd className="min-w-0 space-y-1">
             {c.from != null && c.from !== "" && (
               <div className="flex gap-2">
-                <span aria-hidden className="shrink-0 text-critical">−</span>
+                <span aria-hidden className="shrink-0 text-critical-text">−</span>
                 <Value v={c.from} removed />
               </div>
             )}
@@ -78,12 +80,42 @@ export function ChangeDiff({ changes }: { changes: { field: string; from: string
 
 // Two decisions: apply (Claude writes it now) or reject. "Approve for later"
 // was a dead end, since nothing applies approved rows on its own.
-export function DecisionButtons({ proposal, back, size = "md" }: { proposal: FixProposal; back: string; size?: "sm" | "md" }) {
+// Clients can apply low-risk changes themselves; anything riskier they sign off
+// and Beqi applies. The team sees every decision, including "client approved".
+export function clientCanApply(proposal: FixProposal): boolean {
+  return proposal.risk === "low" && proposal.action !== "image_compress";
+}
+
+export function DecisionButtons({ proposal, back, size = "md", role = "team" }: { proposal: FixProposal; back: string; size?: "sm" | "md"; role?: "team" | "client" }) {
   const sm = size === "sm" ? btnSm : "";
-  const reviewable = proposal.status === "proposed" || proposal.status === "approved" || proposal.status === "failed";
+  const reviewable = proposal.status === "proposed" || proposal.status === "client_approved" || proposal.status === "approved" || proposal.status === "failed";
   if (!reviewable) return null;
+  if (role === "client") {
+    if (proposal.status !== "proposed") return <span className="text-xs text-ink-3">{proposal.status === "client_approved" ? "Approved · Beqi applies this next" : proposal.status === "failed" ? "Beqi is looking into this" : "Approved"}</span>;
+    const self = clientCanApply(proposal);
+    return (
+      <div className="flex flex-wrap gap-2">
+        <form action={decideProposal}>
+          <input type="hidden" name="proposalId" value={proposal.id} />
+          <input type="hidden" name="decision" value={self ? "apply" : "client_approve"} />
+          <input type="hidden" name="back" value={back} />
+          <SubmitButton className={`${btnPrimary} ${sm}`} pendingLabel="Saving…" title={self ? "Claude applies this change in Webflow now" : "Beqi applies this change after your approval"}>
+            {self ? "Approve, apply now" : "Approve for Beqi to apply"}
+          </SubmitButton>
+        </form>
+        <form action={decideProposal}>
+          <input type="hidden" name="proposalId" value={proposal.id} />
+          <input type="hidden" name="decision" value="reject" />
+          <input type="hidden" name="back" value={back} />
+          <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Saving…" title="Don't make this change">
+            No, leave it
+          </SubmitButton>
+        </form>
+      </div>
+    );
+  }
   const risky = proposal.risk === "high" || proposal.action === "image_compress";
-  const applyLabel = proposal.status === "failed" ? "Retry" : "Approve & apply";
+  const applyLabel = proposal.status === "failed" ? "Retry" : proposal.status === "client_approved" ? "Apply (client approved)" : "Approve & apply";
   return (
     <div className="flex flex-wrap gap-2">
       <form action={decideProposal}>
@@ -100,9 +132,24 @@ export function DecisionButtons({ proposal, back, size = "md" }: { proposal: Fix
       </form>
       <form action={decideProposal}>
         <input type="hidden" name="proposalId" value={proposal.id} />
+        <input type="hidden" name="decision" value="resolved" />
+        <input type="hidden" name="back" value={back} />
+        <SubmitButton
+          className={`${btnSecondary} ${sm}`}
+          confirm="Mark this as already fixed on the site by a person? Nothing is written to Webflow; the next audit re-checks it and reopens it if the issue is still there."
+          pendingLabel="Saving…"
+          title="A person already made this change in Webflow"
+        >
+          Fixed manually
+        </SubmitButton>
+      </form>
+      <form action={decideProposal}>
+        <input type="hidden" name="proposalId" value={proposal.id} />
         <input type="hidden" name="decision" value="reject" />
         <input type="hidden" name="back" value={back} />
-        <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Rejecting…">Reject</SubmitButton>
+        <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Rejecting…" title="Don't make this change">
+          Reject
+        </SubmitButton>
       </form>
     </div>
   );
@@ -110,7 +157,7 @@ export function DecisionButtons({ proposal, back, size = "md" }: { proposal: Fix
 
 // A proposal in a list: enough to decide without opening it. `compact` (narrow
 // columns) drops the diff and stacks the buttons under the text.
-export function ProposalRow({ proposal, site, back, compact = false }: { proposal: FixProposal; site?: Site; back: string; compact?: boolean }) {
+export function ProposalRow({ proposal, site, back, compact = false, role = "team" }: { proposal: FixProposal; site?: Site; back: string; compact?: boolean; role?: "team" | "client" }) {
   const changes = proposal.proposal?.changes ?? [];
   return (
     <li className="px-5 py-4">
@@ -122,10 +169,11 @@ export function ProposalRow({ proposal, site, back, compact = false }: { proposa
             </Link>
             <ProposalStatusPill status={proposal.status} />
             <RiskPill risk={proposal.risk} />
+            <EffortPill effort={proposal.effort} />
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-ink-3">
             {site && (
-              <Link href={`/sites/${site.id}`} className="hover:underline">
+              <Link href={`/clients/${site.clientId}`} className="hover:underline">
                 {site.name}
               </Link>
             )}
@@ -149,10 +197,10 @@ export function ProposalRow({ proposal, site, back, compact = false }: { proposa
               View {changes.length === 1 ? "the change" : `${changes.length} changes`} →
             </Link>
           )}
-          {proposal.error && <p className="mt-1.5 text-xs text-critical">{proposal.error}</p>}
+          {proposal.error && <p className="mt-1.5 text-xs text-critical-text">{proposal.error}</p>}
         </div>
         <div className={`shrink-0 ${compact ? "basis-full" : ""}`}>
-          <DecisionButtons proposal={proposal} back={back} size="sm" />
+          <DecisionButtons proposal={proposal} back={back} size="sm" role={role} />
         </div>
       </div>
     </li>

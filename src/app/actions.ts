@@ -5,14 +5,17 @@ import { redirect } from "next/navigation";
 import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { revalidatePath } from "next/cache";
 import { getDb, schema } from "@/db";
-import type { AuditFrequency } from "@/db/schema";
-import { currentActor } from "@/lib/auth";
+import { FREQUENCY_LABELS, type AiSampleEvery, type AuditFrequency } from "@/db/schema";
+import { currentActor, currentActorFull, isTeam, teamActor } from "@/lib/auth";
 import { appUrl, getCtx } from "@/lib/env";
 import { parseRecipients, sendEmail, testEmail } from "@/lib/email";
 import { newId, nowIso, slugify } from "@/lib/id";
-import { importSitesForConnection } from "@/lib/webflow/import";
+import { ensurePublishWebhook, importSitesForConnection } from "@/lib/webflow/import";
 import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startFix, startRun } from "@/audit/start";
+import { sendMonthlyReports } from "@/audit/scheduler";
+import { postSlack, slackConfigured } from "@/lib/slack";
+import { syncSiteStats } from "@/lib/google/sync";
 
 async function log(action: string, detail: Record<string, unknown>, siteId?: string | null) {
   const db = await getDb();
@@ -45,7 +48,7 @@ async function guarded<T>(name: string, fn: () => Promise<T>): Promise<T> {
 
 export async function createClient(formData: FormData) {
   return guarded("createClient", async () => {
-    await currentActor();
+    await teamActor();
     const name = String(formData.get("name") ?? "").trim();
     if (!name) throw new Error("Name is required");
     const db = await getDb();
@@ -58,13 +61,19 @@ export async function createClient(formData: FormData) {
 
 export async function updateClient(formData: FormData) {
   return guarded("updateClient", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("clientId"));
     const name = String(formData.get("name") ?? "").trim();
     if (!name) throw new Error("Name is required");
     const rawEmail = String(formData.get("notifyEmail") ?? "").trim();
     const recipients = parseRecipients(rawEmail);
-    if (rawEmail && recipients.length === 0) redirect(`/clients/${id}?error=${encodeURIComponent("That notification email address doesn't look valid.")}`);
+    if (rawEmail && recipients.length === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("That notification email address doesn't look valid.")}`);
+    const slackWebhookUrl = String(formData.get("slackWebhookUrl") ?? "").trim();
+    if (slackWebhookUrl && !/^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]+$/.test(slackWebhookUrl)) {
+      redirect(`/clients/${id}/settings?error=${encodeURIComponent("The Slack webhook URL should start with https://hooks.slack.com/services/.")}`);
+    }
+    const leadEmail = String(formData.get("leadEmail") ?? "").trim().toLowerCase();
+    if (leadEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(leadEmail)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("The Beqi lead's email address doesn't look valid.")}`);
     const db = await getDb();
     await db
       .update(schema.clients)
@@ -74,24 +83,28 @@ export async function updateClient(formData: FormData) {
         notifyEmail: recipients.length ? recipients.join(", ") : null,
         notifyReminder: formData.get("notifyReminder") === "on",
         notifyResults: formData.get("notifyResults") === "on",
+        notifyMonthly: formData.get("notifyMonthly") === "on",
+        leadName: String(formData.get("leadName") ?? "").trim() || null,
+        leadEmail: leadEmail || null,
+        slackWebhookUrl: slackWebhookUrl || null,
       })
       .where(eq(schema.clients.id, id));
     await log("client.updated", { clientId: id, name, notifyEmail: recipients });
-    revalidatePath(`/clients/${id}`);
-    redirect(`/clients/${id}?saved=1`);
+    revalidatePath(`/clients/${id}/settings`);
+    redirect(`/clients/${id}/settings?saved=1`);
   });
 }
 
 export async function sendTestEmail(formData: FormData) {
   return guarded("sendTestEmail", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("clientId"));
     const db = await getDb();
     const { env } = await getCtx();
     const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
     if (!client) throw new Error("Client not found");
     const to = parseRecipients(client.notifyEmail);
-    if (to.length === 0) redirect(`/clients/${id}?error=${encodeURIComponent("Save a notification email first.")}`);
+    if (to.length === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Save a notification email first.")}`);
     const result = await sendEmail(env, "test", testEmail({ to, clientName: client.name, appUrl: appUrl(env) }));
     const msg =
       result === "sent"
@@ -99,7 +112,39 @@ export async function sendTestEmail(formData: FormData) {
         : result === "skipped"
           ? "Email isn't configured yet: set the RESEND_API_KEY secret and EMAIL_FROM in wrangler.jsonc."
           : "The email provider rejected the message; details are in the activity log.";
-    redirect(`/clients/${id}?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
+    redirect(`/clients/${id}/settings?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
+  });
+}
+
+export async function sendTestSlack(formData: FormData) {
+  return guarded("sendTestSlack", async () => {
+    await teamActor();
+    const id = String(formData.get("clientId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
+    if (!client) throw new Error("Client not found");
+    if (!slackConfigured(client.slackWebhookUrl)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Save a Slack webhook URL first.")}`);
+    const result = await postSlack(env, client.slackWebhookUrl, "test", { text: `Beqi Audit is connected to this channel for ${client.name}. Audit results, applied fixes and the monthly progress report will be posted here.` });
+    const msg = result === "sent" ? "Test message posted to Slack." : "Slack rejected the message; check the webhook URL (details in the activity log).";
+    redirect(`/clients/${id}/settings?${result === "sent" ? "notice" : "error"}=${encodeURIComponent(msg)}`);
+  });
+}
+
+// Sends last month's progress report now (for a demo, or a client who joined
+// mid-month). Resets the month guard first so the scheduler's rule still holds.
+export async function sendMonthlyReportNow(formData: FormData) {
+  return guarded("sendMonthlyReportNow", async () => {
+    await teamActor();
+    const id = String(formData.get("clientId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
+    if (!client) throw new Error("Client not found");
+    if (parseRecipients(client.notifyEmail).length === 0 && !slackConfigured(client.slackWebhookUrl)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Save a notification email or a Slack webhook first.")}`);
+    await db.update(schema.clients).set({ monthlyReportSentFor: null, notifyMonthly: true }).where(eq(schema.clients.id, id));
+    const sent = await sendMonthlyReports(env, new Date(), true, id);
+    redirect(`/clients/${id}/settings?notice=${encodeURIComponent(sent ? "Monthly report sent." : "Monthly report posted (or nothing to report yet: no completed audit last month).")}`);
   });
 }
 
@@ -107,7 +152,7 @@ export async function sendTestEmail(formData: FormData) {
 // foreign keys; run_events and audit_log rows are cleaned up explicitly.
 export async function deleteClient(formData: FormData) {
   return guarded("deleteClient", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const id = String(formData.get("clientId"));
     const db = await getDb();
     const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id) });
@@ -135,9 +180,10 @@ export async function deleteClient(formData: FormData) {
 
 export async function updateSiteSettings(formData: FormData) {
   return guarded("updateSiteSettings", async () => {
-    await currentActor();
+    await teamActor();
     const siteId = String(formData.get("siteId"));
     const freq = String(formData.get("auditFrequency")) as AuditFrequency;
+    if (!(freq in FREQUENCY_LABELS)) throw new Error("Unknown audit schedule");
     const keyPages = String(formData.get("keyPages") ?? "/")
       .split(/[\n,]/)
       .map((s) => s.trim())
@@ -145,7 +191,24 @@ export async function updateSiteSettings(formData: FormData) {
       .map((p) => (p.startsWith("/") ? p : `/${p}`));
     const maxPages = Math.min(200, Math.max(5, Number(formData.get("maxPages") ?? 40) || 40));
     const baseUrl = String(formData.get("baseUrl") ?? "").trim();
+    // Up to 10 custom questions for the AI visibility sample; empty = use the
+    // audit's own suggestions.
+    const aiPrompts = String(formData.get("aiPrompts") ?? "")
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 15);
+    const auditOnPublish = formData.get("auditOnPublish") === "on";
+    const aiRaw = String(formData.get("aiSampleEvery") ?? "monthly");
+    const aiSampleEvery: AiSampleEvery = aiRaw === "audit" || aiRaw === "off" ? aiRaw : "monthly";
+    // Google properties come from the dropdowns (empty = unlink); a changed
+    // property clears the sync marker so the next tick re-pulls the history.
+    const gscProperty = String(formData.get("gscProperty") ?? "").trim() || null;
+    const ga4Property = String(formData.get("ga4Property") ?? "").trim() || null;
+    if (ga4Property && !/^properties\/\d+$/.test(ga4Property)) throw new Error("GA4 property should look like properties/123456");
     const db = await getDb();
+    const before = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId), columns: { gscProperty: true, ga4Property: true } });
+    const googleChanged = !!before && (before.gscProperty !== gscProperty || before.ga4Property !== ga4Property);
     await db
       .update(schema.sites)
       .set({
@@ -154,18 +217,110 @@ export async function updateSiteSettings(formData: FormData) {
         keyPages: keyPages.length ? keyPages : ["/"],
         maxPages,
         isEnterprise: formData.get("isEnterprise") === "on",
+        auditOnPublish,
+        aiPrompts: aiPrompts.length ? aiPrompts : null,
+        aiSampleEvery,
+        gscProperty,
+        ga4Property,
+        ...(googleChanged ? { statsSyncedFor: null } : {}),
         ...(baseUrl ? { baseUrl } : {}),
       })
       .where(eq(schema.sites.id, siteId));
-    await log("site.settings_updated", { freq, keyPages, maxPages }, siteId);
-    revalidatePath(`/sites/${siteId}`);
-    redirect(`/sites/${siteId}?saved=1`);
+    await log("site.settings_updated", { freq, keyPages, maxPages, auditOnPublish, aiPrompts: aiPrompts.length, aiSampleEvery, gscProperty, ga4Property }, siteId);
+    if (googleChanged && (gscProperty || ga4Property)) {
+      // Pull the history now so the page has numbers right after saving.
+      const { env, ctx } = await getCtx();
+      const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+      if (site) ctx.waitUntil(syncSiteStats(env, site, 120).catch(() => {}));
+    }
+    // Make sure Webflow tells us about publishes when the option is on.
+    if (auditOnPublish) {
+      const { env } = await getCtx();
+      const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+      if (site?.connectionId && !site.webhookId) {
+        const connection = await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, site.connectionId) });
+        if (connection && !connection.revokedAt) {
+          const fresh = await ensureFreshConnection(env, connection);
+          await ensurePublishWebhook(db, fresh, site, env).catch(() => {});
+        }
+      }
+    }
+    const owner = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId), columns: { clientId: true } });
+    revalidatePath(`/clients/${owner?.clientId}`, "layout");
+    redirect(`/clients/${owner?.clientId}/settings?saved=1#site`);
+  });
+}
+
+// Starts an audit for every connected site of a client that isn't already
+// running. One site: open its run; several: back to the client page.
+export async function runClientNow(formData: FormData) {
+  return guarded("runClientNow", async () => {
+    await teamActor();
+    const clientId = String(formData.get("clientId"));
+    const db = await getDb();
+    const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, clientId) });
+    const connected = sites.filter((s) => s.connectionId);
+    if (connected.length === 0) redirect(`/clients/${clientId}/settings?error=${encodeURIComponent("No connected site to audit. Connect the client's Webflow workspace first.")}`);
+    const { env, ctx } = await getCtx();
+    const started: string[] = [];
+    for (const s of connected) {
+      const live = await db.query.runs.findFirst({ where: and(eq(schema.runs.siteId, s.id), inArray(schema.runs.status, ["queued", "running"])), columns: { id: true } });
+      if (live) {
+        started.push(live.id);
+        continue;
+      }
+      const { runId, mode } = await startRun(env, s.id, "manual", (p) => ctx.waitUntil(p));
+      await log("run.started", { runId, mode, from: "client" }, s.id);
+      started.push(runId);
+    }
+    if (started.length === 1) redirect(`/runs/${started[0]}`);
+    redirect(`/clients/${clientId}/audits?notice=${encodeURIComponent(`Audits started for ${started.length} sites.`)}`);
+  });
+}
+
+// Client logo: an image stored in KV, served by /api/clients/<id>/logo.
+const LOGO_TYPES = new Set(["image/png", "image/jpeg", "image/svg+xml", "image/webp", "image/gif"]);
+const LOGO_MAX_BYTES = 1_000_000;
+
+export async function uploadClientLogo(formData: FormData) {
+  return guarded("uploadClientLogo", async () => {
+    const actor = (await teamActor()).email;
+    const id = String(formData.get("clientId"));
+    const file = formData.get("logo");
+    if (!(file instanceof File) || file.size === 0) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Choose an image file first.")}`);
+    if (!LOGO_TYPES.has(file.type)) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Use a PNG, JPG, SVG, WebP or GIF.")}`);
+    if (file.size > LOGO_MAX_BYTES) redirect(`/clients/${id}/settings?error=${encodeURIComponent("Keep the logo under 1 MB.")}`);
+    const { env } = await getCtx();
+    const key = `clients/${id}/logo-${Date.now().toString(36)}`;
+    await env.AUDIT_STORE.put(key, await file.arrayBuffer(), { metadata: { contentType: file.type } });
+    const db = await getDb();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id), columns: { logoKey: true } });
+    await db.update(schema.clients).set({ logoKey: key, logoUpdatedAt: nowIso() }).where(eq(schema.clients.id, id));
+    if (client?.logoKey) await env.AUDIT_STORE.delete(client.logoKey).catch(() => {});
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "client.logo_updated", detail: { clientId: id, type: file.type, bytes: file.size } });
+    revalidatePath(`/clients/${id}`, "layout");
+    redirect(`/clients/${id}/settings?saved=1`);
+  });
+}
+
+export async function removeClientLogo(formData: FormData) {
+  return guarded("removeClientLogo", async () => {
+    await teamActor();
+    const id = String(formData.get("clientId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, id), columns: { logoKey: true } });
+    if (client?.logoKey) await env.AUDIT_STORE.delete(client.logoKey).catch(() => {});
+    await db.update(schema.clients).set({ logoKey: null, logoUpdatedAt: null }).where(eq(schema.clients.id, id));
+    await log("client.logo_removed", { clientId: id });
+    revalidatePath(`/clients/${id}`, "layout");
+    redirect(`/clients/${id}/settings?saved=1`);
   });
 }
 
 export async function runNow(formData: FormData) {
   return guarded("runNow", async () => {
-    await currentActor();
+    await teamActor();
     const siteId = String(formData.get("siteId"));
     const db = await getDb();
     // One audit at a time per site: a second click while one is live opens it.
@@ -183,7 +338,7 @@ export async function runNow(formData: FormData) {
 
 export async function ignoreFinding(formData: FormData) {
   return guarded("ignoreFinding", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const siteId = String(formData.get("siteId"));
     const checkId = String(formData.get("checkId"));
     const pagePath = formData.get("pagePath") ? String(formData.get("pagePath")) : null;
@@ -199,7 +354,7 @@ export async function ignoreFinding(formData: FormData) {
 
 export async function markFindingState(formData: FormData) {
   return guarded("markFindingState", async () => {
-    await currentActor();
+    await teamActor();
     const siteId = String(formData.get("siteId"));
     const fingerprint = String(formData.get("fingerprint"));
     const status = String(formData.get("status")) as "open" | "false_positive" | "ignored";
@@ -217,13 +372,14 @@ export async function markFindingState(formData: FormData) {
 
 export async function deleteIgnoreRule(formData: FormData) {
   return guarded("deleteIgnoreRule", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("id"));
     const siteId = String(formData.get("siteId"));
     const db = await getDb();
     await db.delete(schema.ignoreRules).where(eq(schema.ignoreRules.id, id));
-    revalidatePath(`/sites/${siteId}`);
-    redirect(`/sites/${siteId}`);
+    const owner = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId), columns: { clientId: true } });
+    revalidatePath(`/clients/${owner?.clientId}`, "layout");
+    redirect(`/clients/${owner?.clientId}/settings#site`);
   });
 }
 
@@ -232,16 +388,56 @@ export async function deleteIgnoreRule(formData: FormData) {
 // a retried request can never apply the same fix twice.
 export async function decideProposal(formData: FormData) {
   return guarded("decideProposal", async () => {
-    const actor = await currentActor();
+    const who = await currentActorFull();
+    const actor = who.email;
     const id = String(formData.get("proposalId"));
-    const decision = String(formData.get("decision")) as "approve" | "reject" | "apply";
+    let decision = String(formData.get("decision")) as "approve" | "reject" | "apply" | "resolved" | "client_approve";
     const back = String(formData.get("back") ?? "/fixes");
     const db = await getDb();
     const proposal = await db.query.fixProposals.findFirst({ where: eq(schema.fixProposals.id, id) });
     if (!proposal) throw new Error("Proposal not found");
-    const reviewable = ["proposed", "approved", "failed"] as const;
+    const reviewable = ["proposed", "client_approved", "approved", "failed"] as const;
 
-    if (decision === "reject") {
+    if (!isTeam(who)) {
+      // A client: only their own sites, only proposed changes, and only
+      // low-risk ones applied directly; the rest wait for Beqi.
+      const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, proposal.siteId), columns: { clientId: true } });
+      if (!site || site.clientId !== who.clientId) throw new Error("Proposal not found");
+      if (proposal.status !== "proposed") redirect(back);
+      if (decision === "resolved" || decision === "approve") throw new Error("Not allowed");
+      if (decision === "apply" && !(proposal.risk === "low" && proposal.action !== "image_compress")) decision = "client_approve";
+    }
+
+    if (decision === "client_approve") {
+      await db
+        .update(schema.fixProposals)
+        .set({ status: "client_approved", approvedBy: actor, error: null })
+        .where(and(eq(schema.fixProposals.id, id), eq(schema.fixProposals.status, "proposed")));
+      await log("fix.client_approved", { proposalId: id, action: proposal.action }, proposal.siteId);
+      revalidatePath(back.split("#")[0]);
+      redirect(back);
+    }
+
+    if (decision === "resolved") {
+      // A person made the change on the site. Close the proposal and the
+      // finding; the next audit re-verifies and reopens it if still present.
+      await db
+        .update(schema.fixProposals)
+        .set({
+          status: "resolved",
+          approvedBy: actor,
+          appliedBy: actor,
+          appliedAt: nowIso(),
+          error: null,
+          result: { status: "manual", summary: `Marked as fixed on the site by ${actor}.`, changesMade: [], verification: "Confirmed by a person; the next audit re-checks it.", needsPublish: false },
+        })
+        .where(and(eq(schema.fixProposals.id, id), inArray(schema.fixProposals.status, [...reviewable])));
+      await db
+        .update(schema.findingStates)
+        .set({ status: "fixed", note: `Fixed manually by ${actor} on ${nowIso().slice(0, 10)}`, updatedAt: nowIso() })
+        .where(and(eq(schema.findingStates.siteId, proposal.siteId), eq(schema.findingStates.fingerprint, proposal.fingerprint)));
+      await log("fix.resolved_manually", { proposalId: id, action: proposal.action }, proposal.siteId);
+    } else if (decision === "reject") {
       await db
         .update(schema.fixProposals)
         .set({ status: "rejected", approvedBy: actor })
@@ -275,7 +471,7 @@ export async function decideProposal(formData: FormData) {
 // workspace gained sites).
 export async function reimportSites(formData: FormData) {
   return guarded("reimportSites", async () => {
-    const actor = await currentActor();
+    const actor = (await teamActor()).email;
     const id = String(formData.get("connectionId"));
     const clientId = String(formData.get("clientId"));
     const db = await getDb();
@@ -284,28 +480,132 @@ export async function reimportSites(formData: FormData) {
     if (!connection || connection.revokedAt) throw new Error("Connection not found");
     try {
       const fresh = await ensureFreshConnection(env, connection);
-      const { imported } = await importSitesForConnection(db, fresh, env);
-      await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId: id, sites: imported } });
+      const { imported, choices } = await importSitesForConnection(db, fresh, env);
+      await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId: id, sites: imported, choices: choices.length } });
+      if (imported === 0 && choices.length > 1) redirect(`/clients/${clientId}/settings?choose=${id}`);
     } catch (e) {
+      if (isRedirectError(e)) throw e;
       const message = (e as Error).message ?? String(e);
       await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId: id, error: message.slice(0, 500) } });
-      redirect(`/clients/${clientId}?error=${encodeURIComponent(message.slice(0, 200))}`);
+      redirect(`/clients/${clientId}/settings?error=${encodeURIComponent(message.slice(0, 200))}`);
     }
-    revalidatePath(`/clients/${clientId}`);
+    revalidatePath(`/clients/${clientId}`, "layout");
     redirect(`/clients/${clientId}?imported=1`);
+  });
+}
+
+// The workspace has several sites: the team picks the one that is this client's.
+export async function chooseSite(formData: FormData) {
+  return guarded("chooseSite", async () => {
+    const actor = (await teamActor()).email;
+    const id = String(formData.get("connectionId"));
+    const clientId = String(formData.get("clientId"));
+    const webflowSiteId = String(formData.get("webflowSiteId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const connection = await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, id) });
+    if (!connection || connection.revokedAt) throw new Error("Connection not found");
+    const fresh = await ensureFreshConnection(env, connection);
+    const { imported } = await importSitesForConnection(db, fresh, env, webflowSiteId);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId: id, sites: imported, chosen: webflowSiteId } });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    redirect(`/clients/${clientId}?connected=${imported}`);
+  });
+}
+
+// Public report links. A token is created once per run and reused; stopping
+// sharing clears it, which makes the old link stop working.
+export async function shareRun(formData: FormData) {
+  return guarded("shareRun", async () => {
+    const actor = (await teamActor()).email;
+    const runId = String(formData.get("runId"));
+    const db = await getDb();
+    const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId) });
+    if (!run) throw new Error("Run not found");
+    if (run.status !== "complete") redirect(`/runs/${runId}?error=${encodeURIComponent("Only completed audits can be shared.")}`);
+    if (!run.shareToken) {
+      const bytes = crypto.getRandomValues(new Uint8Array(18));
+      const token = [...bytes].map((b) => "0123456789abcdefghijklmnopqrstuvwxyz"[b % 36]).join("");
+      await db.update(schema.runs).set({ shareToken: token, sharedAt: nowIso(), sharedBy: actor }).where(eq(schema.runs.id, runId));
+      await log("run.shared", { runId }, run.siteId);
+    }
+    revalidatePath(`/runs/${runId}`);
+    redirect(`/runs/${runId}?shared=1`);
+  });
+}
+
+export async function unshareRun(formData: FormData) {
+  return guarded("unshareRun", async () => {
+    await teamActor();
+    const runId = String(formData.get("runId"));
+    const db = await getDb();
+    const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId), columns: { siteId: true } });
+    await db.update(schema.runs).set({ shareToken: null, sharedAt: null, sharedBy: null }).where(eq(schema.runs.id, runId));
+    await log("run.unshared", { runId }, run?.siteId);
+    revalidatePath(`/runs/${runId}`);
+    redirect(`/runs/${runId}?unshared=1`);
   });
 }
 
 export async function disconnectWorkspace(formData: FormData) {
   return guarded("disconnectWorkspace", async () => {
-    await currentActor();
+    await teamActor();
     const id = String(formData.get("connectionId"));
     const clientId = String(formData.get("clientId"));
     const db = await getDb();
     await db.update(schema.webflowConnections).set({ revokedAt: nowIso() }).where(eq(schema.webflowConnections.id, id));
     await db.update(schema.sites).set({ connectionId: null }).where(eq(schema.sites.connectionId, id));
     await log("webflow.disconnected", { connectionId: id, clientId });
-    revalidatePath(`/clients/${clientId}`);
-    redirect(`/clients/${clientId}`);
+    revalidatePath(`/clients/${clientId}`, "layout");
+    redirect(`/clients/${clientId}/settings?notice=${encodeURIComponent("Workspace disconnected.")}`);
+  });
+}
+
+export async function disconnectGoogle(formData: FormData) {
+  return guarded("disconnectGoogle", async () => {
+    await teamActor();
+    const clientId = String(formData.get("clientId"));
+    const db = await getDb();
+    await db.update(schema.googleConnections).set({ revokedAt: nowIso() }).where(eq(schema.googleConnections.clientId, clientId));
+    await log("google.disconnected", { clientId });
+    revalidatePath(`/clients/${clientId}`, "layout");
+    redirect(`/clients/${clientId}/settings?notice=${encodeURIComponent("Google disconnected. Synced data is kept; nothing new is pulled until it is connected again.")}`);
+  });
+}
+
+// Pulls the last 120 days for one site right now (after linking properties,
+// or to check a failed nightly sync).
+export async function syncGoogleNow(formData: FormData) {
+  return guarded("syncGoogleNow", async () => {
+    await teamActor();
+    const siteId = String(formData.get("siteId"));
+    const db = await getDb();
+    const { env } = await getCtx();
+    const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+    if (!site) throw new Error("Site not found");
+    if (!site.gscProperty && !site.ga4Property) redirect(`/clients/${site.clientId}/settings?error=${encodeURIComponent("Link a Search Console or GA4 property in the site settings first.")}#site`);
+    const r = await syncSiteStats(env, site, 120);
+    await db.update(schema.sites).set({ statsSyncedFor: new Date().toISOString().slice(0, 10) }).where(eq(schema.sites.id, siteId));
+    revalidatePath(`/clients/${site.clientId}`);
+    if (r.errors.length) redirect(`/clients/${site.clientId}?error=${encodeURIComponent(r.errors.join(" · "))}`);
+    redirect(`/clients/${site.clientId}?notice=${encodeURIComponent(`Google data synced: ${r.gsc ?? 0} Search Console rows, ${r.ga4 ?? 0} GA4 rows, ${r.ai ?? 0} AI-referral rows.`)}`);
+  });
+}
+
+// Adds one of the audit's suggested questions to the site's frozen set.
+export async function adoptAiPrompt(formData: FormData) {
+  return guarded("adoptAiPrompt", async () => {
+    await teamActor();
+    const siteId = String(formData.get("siteId"));
+    const prompt = String(formData.get("prompt") ?? "").trim();
+    const db = await getDb();
+    const site = await db.query.sites.findFirst({ where: eq(schema.sites.id, siteId) });
+    if (!site || !prompt) throw new Error("Site or question missing");
+    const set = [...(site.aiPrompts ?? [])];
+    if (!set.includes(prompt) && set.length < 15) set.push(prompt);
+    await db.update(schema.sites).set({ aiPrompts: set, aiPromptCandidates: (site.aiPromptCandidates ?? []).filter((c) => c !== prompt) }).where(eq(schema.sites.id, siteId));
+    await log("site.settings_updated", { aiPrompts: set.length, adopted: prompt }, siteId);
+    revalidatePath(`/clients/${site.clientId}/settings`);
+    redirect(`/clients/${site.clientId}/settings?notice=${encodeURIComponent("Question added to the set.")}#site`);
   });
 }

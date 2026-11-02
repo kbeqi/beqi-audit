@@ -6,7 +6,9 @@ import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-or
 
 const now = sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
-export type UserRole = "admin" | "member";
+// "client": a person at a client company; sees only that client's hub and can
+// approve low-risk fixes. Tied to a client through users.client_id.
+export type UserRole = "admin" | "member" | "client";
 
 // Team members who may sign in. ADMIN_EMAILS (wrangler.jsonc) are admins even
 // without a row, so the first sign-in bootstraps the table.
@@ -15,6 +17,8 @@ export const users = sqliteTable("users", {
   email: text("email").notNull().unique(),
   name: text("name"),
   role: text("role").$type<UserRole>().notNull().default("member"),
+  // Set for role "client": the one client this person belongs to.
+  clientId: text("client_id"),
   invitedBy: text("invited_by"),
   lastLoginAt: text("last_login_at"),
   disabledAt: text("disabled_at"),
@@ -57,6 +61,9 @@ export const clients = sqliteTable("clients", {
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   notes: text("notes"),
+  // Logo stored in AUDIT_STORE under this key (served by /api/clients/<id>/logo).
+  logoKey: text("logo_key"),
+  logoUpdatedAt: text("logo_updated_at"),
   // Where audit emails for this client go (one address, or several separated
   // by commas). Empty means no emails.
   notifyEmail: text("notify_email"),
@@ -64,6 +71,15 @@ export const clients = sqliteTable("clients", {
   notifyReminder: integer("notify_reminder", { mode: "boolean" }).notNull().default(true),
   // Score, counts and highlights when an audit finishes.
   notifyResults: integer("notify_results", { mode: "boolean" }).notNull().default(true),
+  // The Beqi person who owns this client ("one named lead").
+  leadName: text("lead_name"),
+  leadEmail: text("lead_email"),
+  // Slack incoming webhook for the shared client channel; null = no Slack.
+  slackWebhookUrl: text("slack_webhook_url"),
+  // A progress report on the first of each month (email and Slack).
+  notifyMonthly: integer("notify_monthly", { mode: "boolean" }).notNull().default(true),
+  // "YYYY-MM" of the last monthly report, so a tick never sends it twice.
+  monthlyReportSentFor: text("monthly_report_sent_for"),
   createdAt: text("created_at").notNull().default(now),
 });
 
@@ -102,7 +118,19 @@ export const webflowConnections = sqliteTable(
   (t) => [index("webflow_connections_client_idx").on(t.clientId)],
 );
 
-export type AuditFrequency = "daily" | "weekly" | "monthly" | "off";
+export type AuditFrequency = "daily" | "every3days" | "weekly" | "biweekly" | "monthly" | "off";
+
+export const FREQUENCY_LABELS: Record<AuditFrequency, string> = {
+  daily: "Daily",
+  every3days: "Every 3 days",
+  weekly: "Weekly",
+  biweekly: "Every 2 weeks",
+  monthly: "Monthly",
+  off: "Off (manual only)",
+};
+
+export type AiSampleEvery = "monthly" | "audit" | "off";
+export const AI_SAMPLE_LABELS: Record<AiSampleEvery, string> = { monthly: "Once a month (with the report)", audit: "With every audit", off: "Off" };
 
 export const sites = sqliteTable(
   "sites",
@@ -130,6 +158,27 @@ export const sites = sqliteTable(
     keyPages: text("key_pages", { mode: "json" }).$type<string[]>().notNull().default(sql`'["/"]'`),
     maxPages: integer("max_pages").notNull().default(200),
     isEnterprise: integer("is_enterprise", { mode: "boolean" }).notNull().default(false),
+    // Release assurance: a Webflow site_publish webhook starts an audit.
+    auditOnPublish: integer("audit_on_publish", { mode: "boolean" }).notNull().default(true),
+    webhookId: text("webhook_id"),
+    webhookSecret: text("webhook_secret"),
+    // The frozen question set for the AI answers check; null = not agreed yet,
+    // the audit's own suggestions are used (and offered as candidates).
+    aiPrompts: text("ai_prompts", { mode: "json" }).$type<string[]>(),
+    // Questions the latest audit suggested, for the team to adopt into the set.
+    aiPromptCandidates: text("ai_prompt_candidates", { mode: "json" }).$type<string[]>(),
+    // How often the AI answers check runs: once a month (the service's reporting
+    // cadence), with every audit, or never.
+    aiSampleEvery: text("ai_sample_every").$type<AiSampleEvery>().notNull().default("monthly"),
+    // "YYYY-MM" of the last check, so monthly means once a month.
+    aiSampledFor: text("ai_sampled_for"),
+    // Google measurement: a Search Console property ("sc-domain:example.com" or
+    // "https://www.example.com/") and a GA4 property ("properties/123"), read
+    // through the client's google_connections row. Null = not linked.
+    gscProperty: text("gsc_property"),
+    ga4Property: text("ga4_property"),
+    // YYYY-MM-DD of the last nightly stats sync, so each day syncs once.
+    statsSyncedFor: text("stats_synced_for"),
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [
@@ -142,13 +191,13 @@ export const sites = sqliteTable(
 export type RunTrigger = "schedule" | "manual" | "publish";
 export type RunStatus = "queued" | "running" | "complete" | "failed";
 
-export type CategoryKey =
-  | "seo"
-  | "aeo"
-  | "performance"
-  | "links"
-  | "unused"
-  | "naming";
+// "conversion": readiness to convert (CTAs, forms, next steps), judged from the
+// pages, not from analytics. "trust": identity, expertise and evidence signals. "ai": sampled AI-assistant
+// visibility and accuracy; reported but not part of the overall score.
+export type CategoryKey = "seo" | "aeo" | "performance" | "conversion" | "trust" | "links" | "unused" | "naming" | "ai";
+
+export type Confidence = "high" | "medium" | "low";
+export type Effort = "quick" | "moderate" | "large";
 
 export type CategoryScores = Partial<Record<CategoryKey, number>>;
 
@@ -160,6 +209,35 @@ export interface RunSummary {
   newFindings: number;
   resolvedFindings: number;
   proposals: number;
+  // Deterministic PageSpeed results for the key pages (mobile).
+  perf?: { pages: number; passing: number; unavailable: boolean };
+  // Sampled AI-assistant visibility; a sample, never market share.
+  aiVisibility?: AiVisibilitySummary;
+  // What changed vs the previous completed run (for publish-triggered runs).
+  regressions?: { scoreDelta: number | null; newCriticalHigh: number };
+  // The URL inventory check (migration / indexability guard), from code.
+  inventory?: {
+    pages: number;
+    ok: number;
+    redirects: number;
+    broken: number;
+    noindex: number;
+    sitemapUrls: number;
+    robotsOk: boolean;
+    sitemapOk: boolean;
+    changes: { gone: number; redirected: number; noindexed: number; sitemapDelta: number } | null;
+  };
+}
+
+export interface AiVisibilitySummary {
+  prompts: number;
+  answers: number;
+  mentioned: number;
+  cited: number;
+  recommended: number;
+  inaccuracies: number;
+  byEngine: Record<string, { answers: number; mentioned: number; cited: number; recommended: number }>;
+  note: string;
 }
 
 // Token usage and cost of the agent calls behind a run.
@@ -196,6 +274,10 @@ export const runs = sqliteTable(
     // Claude's own narrative of the audit (markdown) and its top highlights.
     agentSummary: text("agent_summary"),
     highlights: text("highlights", { mode: "json" }).$type<string[]>(),
+    // Public read-only report link (/share/<token>); null when not shared.
+    shareToken: text("share_token").unique(),
+    sharedAt: text("shared_at"),
+    sharedBy: text("shared_by"),
     error: text("error"),
     createdAt: text("created_at").notNull().default(now),
   },
@@ -245,6 +327,9 @@ export const findings = sqliteTable(
     data: text("data", { mode: "json" }).$type<Record<string, unknown>>(),
     // Set when an ignore rule suppressed this finding in this run.
     ignored: integer("ignored", { mode: "boolean" }).notNull().default(false),
+    // How sure the audit is, and roughly how much work the fix is.
+    confidence: text("confidence").$type<Confidence>(),
+    effort: text("effort").$type<Effort>(),
   },
   (t) => [
     index("findings_run_idx").on(t.runId),
@@ -322,7 +407,10 @@ export const snapshots = sqliteTable(
   (t) => [index("snapshots_site_kind_idx").on(t.siteId, t.kind, t.createdAt)],
 );
 
-export type ProposalStatus = "proposed" | "approved" | "applying" | "applied" | "rejected" | "reverted" | "failed";
+// "resolved": a person fixed it on the site themselves; the next audit confirms.
+// "client_approved": the client signed off on a medium/high-risk change and
+// Beqi applies it.
+export type ProposalStatus = "proposed" | "client_approved" | "approved" | "applying" | "applied" | "resolved" | "rejected" | "reverted" | "failed";
 export type ProposalRisk = "low" | "medium" | "high";
 
 export interface ProposalChange {
@@ -341,7 +429,7 @@ export interface ProposalTarget {
 
 // What the fix agent reported after applying a proposal.
 export interface ProposalResult {
-  status: "applied" | "skipped" | "failed";
+  status: "applied" | "skipped" | "failed" | "manual";
   summary: string;
   changesMade: ProposalChange[];
   verification: string;
@@ -367,6 +455,9 @@ export const fixProposals = sqliteTable(
     proposal: text("proposal", { mode: "json" }).$type<{ changes: ProposalChange[] }>().notNull(),
     previous: text("previous", { mode: "json" }).$type<Record<string, unknown>>(),
     rationale: text("rationale"),
+    effort: text("effort").$type<Effort>(),
+    // What the client said when approving or declining.
+    clientNote: text("client_note"),
     approvedBy: text("approved_by"),
     appliedBy: text("applied_by"),
     appliedAt: text("applied_at"),
@@ -375,6 +466,33 @@ export const fixProposals = sqliteTable(
     createdAt: text("created_at").notNull().default(now),
   },
   (t) => [index("fix_proposals_site_status_idx").on(t.siteId, t.status)],
+);
+
+export type AiEngine = "perplexity" | "claude";
+
+// One AI-assistant answer from the visibility sample.
+export const aiAnswers = sqliteTable(
+  "ai_answers",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    prompt: text("prompt").notNull(),
+    engine: text("engine").$type<AiEngine>().notNull(),
+    iteration: integer("iteration").notNull(),
+    mentioned: integer("mentioned", { mode: "boolean" }).notNull().default(false),
+    cited: integer("cited", { mode: "boolean" }).notNull().default(false),
+    recommended: integer("recommended", { mode: "boolean" }).notNull().default(false),
+    answer: text("answer").notNull(),
+    citations: text("citations", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+    issues: text("issues", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("ai_answers_run_idx").on(t.runId)],
 );
 
 export const ignoreRules = sqliteTable(
@@ -408,6 +526,57 @@ export const auditLog = sqliteTable(
   (t) => [index("audit_log_site_idx").on(t.siteId, t.createdAt)],
 );
 
+// One Google sign-in per client (the client's own account, or a Beqi account
+// with access to their Search Console and GA4). Read-only scopes only.
+export const googleConnections = sqliteTable(
+  "google_connections",
+  {
+    id: text("id").primaryKey(),
+    clientId: text("client_id")
+      .notNull()
+      .references(() => clients.id, { onDelete: "cascade" }),
+    googleEmail: text("google_email"),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+    expiresAt: text("expires_at").notNull(),
+    scopes: text("scopes").notNull(),
+    authorizedBy: text("authorized_by"),
+    // Set when a refresh fails for good (revoked at Google); a person reconnects.
+    revokedAt: text("revoked_at"),
+    createdAt: text("created_at").notNull().default(now),
+  },
+  (t) => [index("google_connections_client_idx").on(t.clientId)],
+);
+
+// "gsc": Search Console clicks / impressions / position. "ga4": sessions and
+// key events by landing page. "ga4_ai": sessions referred by AI assistants.
+export type StatsSource = "gsc" | "ga4" | "ga4_ai";
+
+// Daily rows per site, page and source; page "*" is the site total. Synced
+// nightly from Google, kept forever (small), so pages can be compared before
+// and after a fix and months against each other.
+export const pageStats = sqliteTable(
+  "page_stats",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id, { onDelete: "cascade" }),
+    source: text("source").$type<StatsSource>().notNull(),
+    date: text("date").notNull(),
+    page: text("page").notNull(),
+    clicks: integer("clicks").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    // Average position, weighted by impressions when aggregated.
+    position: real("position"),
+    sessions: integer("sessions").notNull().default(0),
+    keyEvents: integer("key_events").notNull().default(0),
+  },
+  (t) => [uniqueIndex("page_stats_key").on(t.siteId, t.source, t.date, t.page), index("page_stats_site_date_idx").on(t.siteId, t.date)],
+);
+
+export type GoogleConnection = typeof googleConnections.$inferSelect;
+export type PageStat = typeof pageStats.$inferSelect;
 export type Client = typeof clients.$inferSelect;
 export type Site = typeof sites.$inferSelect;
 export type Run = typeof runs.$inferSelect;
@@ -417,5 +586,6 @@ export type WebflowConnection = typeof webflowConnections.$inferSelect;
 export type PageMetric = typeof pageMetrics.$inferSelect;
 export type FixProposal = typeof fixProposals.$inferSelect;
 export type RunEvent = typeof runEvents.$inferSelect;
+export type AiAnswer = typeof aiAnswers.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type IgnoreRule = typeof ignoreRules.$inferSelect;

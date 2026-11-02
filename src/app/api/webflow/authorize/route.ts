@@ -1,15 +1,20 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getEnv, appUrl } from "@/lib/env";
-import { currentActor } from "@/lib/auth";
+import { teamActor } from "@/lib/auth";
 import { PENDING_COOKIE, beginMcpAuthorization, encodePending } from "@/lib/webflow/mcp-oauth";
 
 // GET /api/webflow/authorize?client=<clientId>
 // Sends a Beqi team member to Webflow to authorize the app's access to one
 // workspace through Webflow's MCP server. The client id rides along in the state.
 export async function GET(request: Request) {
-  await currentActor();
   const env = await getEnv();
+  // A signed-out or client-role visitor is sent to sign in, not shown an error.
+  try {
+    await teamActor();
+  } catch {
+    return NextResponse.redirect(`${appUrl(env, request)}/login?next=${encodeURIComponent("/clients")}`);
+  }
   const url = new URL(request.url);
   const clientId = url.searchParams.get("client");
   if (!clientId) return NextResponse.json({ error: "client is required" }, { status: 400 });

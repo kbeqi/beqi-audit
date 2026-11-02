@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getDb, schema } from "@/db";
 import { getEnv, appUrl } from "@/lib/env";
-import { currentActor } from "@/lib/auth";
+import { teamActor } from "@/lib/auth";
 import { newId, nowIso } from "@/lib/id";
 import { PENDING_COOKIE, completeMcpAuthorization, decodePending, expiresAtFrom } from "@/lib/webflow/mcp-oauth";
 import { importSitesForConnection } from "@/lib/webflow/import";
@@ -25,8 +25,7 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${appUrl(env, request)}/?error=${encodeURIComponent("The Webflow authorization did not complete (state mismatch). Try again.")}`);
   }
   const clientId = pending.clientId;
-  const back = `${appUrl(env, request)}/clients/${clientId}`;
-  const actor = await currentActor();
+  const actor = (await teamActor()).email;
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
   if (!client) return NextResponse.redirect(`${appUrl(env, request)}/?error=client_not_found`);
@@ -59,17 +58,18 @@ export async function GET(request: Request) {
   } catch (e) {
     const message = (e as Error).message ?? String(e);
     await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.connect_failed", detail: { clientId, error: message.slice(0, 500) } });
-    return NextResponse.redirect(`${back}?error=${encodeURIComponent(message.slice(0, 200))}`);
+    return NextResponse.redirect(`${appUrl(env, request)}/clients/${clientId}/settings?error=${encodeURIComponent(message.slice(0, 200))}`);
   }
 
   try {
     const connection = (await db.query.webflowConnections.findFirst({ where: eq(schema.webflowConnections.id, connectionId) }))!;
-    const { imported } = await importSitesForConnection(db, connection, env);
-    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId, sites: imported } });
-    return NextResponse.redirect(`${back}?connected=${imported}`);
+    const { imported, choices } = await importSitesForConnection(db, connection, env);
+    await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.sites_imported", detail: { clientId, connectionId, sites: imported, choices: choices.length } });
+    if (imported === 0 && choices.length > 1) return NextResponse.redirect(`${appUrl(env, request)}/clients/${clientId}/settings?choose=${connectionId}`);
+    return NextResponse.redirect(`${appUrl(env, request)}/clients/${clientId}?connected=${imported}`);
   } catch (e) {
     const message = (e as Error).message ?? String(e);
     await db.insert(schema.auditLog).values({ id: newId(), actor, action: "webflow.import_failed", detail: { clientId, connectionId, error: message.slice(0, 500) } });
-    return NextResponse.redirect(`${back}?error=${encodeURIComponent(`Connected, but importing sites failed: ${message.slice(0, 160)}. Use "Re-import sites".`)}`);
+    return NextResponse.redirect(`${appUrl(env, request)}/clients/${clientId}/settings?error=${encodeURIComponent(`Connected, but importing sites failed: ${message.slice(0, 160)}. Use "Re-import sites".`)}`);
   }
 }

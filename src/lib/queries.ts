@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt } from "drizzle-orm";
 import { getDb, schema } from "@/db";
 import type { Client, Finding, FixProposal, Run, RunEvent, Site, WebflowConnection } from "@/db/schema";
+import { fixedPageEffects, statsSummary } from "@/lib/google/sync";
 
 export interface SiteCard {
   site: Site;
@@ -21,8 +22,15 @@ export interface ClientCard {
   connected: boolean;
 }
 
-const OPEN_PROPOSAL_STATUSES = ["proposed", "approved", "applying"] as const;
-const SUPPRESSED = new Set(["ignored", "false_positive"]);
+const OPEN_PROPOSAL_STATUSES = ["proposed", "client_approved", "approved", "applying"] as const;
+const SUPPRESSED = new Set(["ignored", "false_positive", "fixed"]);
+
+// Each client has one site. Older data may still hold several; the one that
+// is connected and most recently audited is the client's site.
+export function primarySite(sites: Site[]): Site | null {
+  if (sites.length === 0) return null;
+  return [...sites].sort((a, b) => Number(!!b.connectionId) - Number(!!a.connectionId) || (b.lastRunId ? 1 : 0) - (a.lastRunId ? 1 : 0) || a.createdAt.localeCompare(b.createdAt))[0];
+}
 
 // Small helper for D1's bound-parameter cap.
 async function chunked<T, R>(items: T[], size: number, fn: (chunk: T[]) => Promise<R[]>): Promise<R[]> {
@@ -56,7 +64,7 @@ export async function siteCards(sites: Site[]): Promise<SiteCard[]> {
     ? await chunked(latestIds, 60, (ids) => db.query.findings.findMany({ where: and(inArray(schema.findings.runId, ids), eq(schema.findings.ignored, false)) }))
     : [];
   const states = findings.length
-    ? await chunked(siteIds, 60, (ids) => db.query.findingStates.findMany({ where: and(inArray(schema.findingStates.siteId, ids), inArray(schema.findingStates.status, ["ignored", "false_positive"])) }))
+    ? await chunked(siteIds, 60, (ids) => db.query.findingStates.findMany({ where: and(inArray(schema.findingStates.siteId, ids), inArray(schema.findingStates.status, ["ignored", "false_positive", "fixed"])) }))
     : [];
   const suppressed = new Set(states.map((s) => `${s.siteId}|${s.fingerprint}`));
 
@@ -114,7 +122,7 @@ export async function openFindingsForRun(siteId: string, runId: string): Promise
   const rows = await db.query.findings.findMany({ where: and(eq(schema.findings.runId, runId), eq(schema.findings.ignored, false)) });
   if (rows.length === 0) return [];
   const states = await db.query.findingStates.findMany({
-    where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.status, ["ignored", "false_positive"])),
+    where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.status, ["ignored", "false_positive", "fixed"])),
     columns: { fingerprint: true },
   });
   const suppressed = new Set(states.map((s) => s.fingerprint));
@@ -135,38 +143,132 @@ export async function siteDetail(siteId: string) {
   ]);
   const latest = runs.find((r) => r.status === "complete") ?? null;
   const previous = runs.filter((r) => r.status === "complete")[1] ?? null;
-  const findings = latest ? await openFindingsForRun(site.id, latest.id) : [];
+  const [findings, metrics] = latest ? await Promise.all([openFindingsForRun(site.id, latest.id), db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, latest.id) })]) : [[], []];
   const states = findings.length ? await db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, site.id) }) : [];
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
-  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity };
+  const [stats, fixedPages, googleConnection] = await Promise.all([
+    site.gscProperty || site.ga4Property ? statsSummary(db, site.id) : Promise.resolve(null),
+    site.gscProperty || site.ga4Property ? fixedPageEffects(db, site.id) : Promise.resolve([]),
+    db.query.googleConnections.findFirst({ where: and(eq(schema.googleConnections.clientId, site.clientId), isNull(schema.googleConnections.revokedAt)) }),
+  ]);
+  return { site, client: client!, connection: connection ?? null, runs, latest, previous, findings, stateByFp, proposals, ignoreRules, activity, metrics, stats, fixedPages, googleConnection: googleConnection ?? null };
 }
 
 export async function runDetail(runId: string) {
   const db = await getDb();
   const run = await db.query.runs.findFirst({ where: eq(schema.runs.id, runId) });
   if (!run) return null;
-  const [site, findings, events] = await Promise.all([
+  const [site, findings, events, metrics, aiAnswers] = await Promise.all([
     db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId) }),
     db.query.findings.findMany({ where: eq(schema.findings.runId, run.id) }),
     db.query.runEvents.findMany({ where: eq(schema.runEvents.streamId, run.id), orderBy: asc(schema.runEvents.seq), limit: 500 }),
+    db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, run.id) }),
+    db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, run.id), orderBy: [asc(schema.aiAnswers.prompt), asc(schema.aiAnswers.engine), asc(schema.aiAnswers.iteration)] }),
   ]);
   const client = site ? await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId) }) : null;
   const states = findings.length ? await db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, run.siteId) }) : [];
   const stateByFp = new Map(states.map((s) => [s.fingerprint, s]));
   const findingIds = findings.map((f) => f.id);
   const proposals = findingIds.length ? await chunked(findingIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.findingId, ids) })) : [];
-  return { run, site: site!, client, findings, stateByFp, proposals, events };
+  // How long this site's last audits took, for the live progress estimate.
+  const recent = await db.query.runs.findMany({
+    where: and(eq(schema.runs.siteId, run.siteId), eq(schema.runs.status, "complete")),
+    orderBy: desc(schema.runs.createdAt),
+    columns: { id: true, startedAt: true, finishedAt: true },
+    limit: 4,
+  });
+  const recentDurations = recent
+    .filter((r) => r.id !== run.id && r.startedAt && r.finishedAt)
+    .map((r) => new Date(r.finishedAt!).getTime() - new Date(r.startedAt!).getTime())
+    .filter((ms) => ms > 0)
+    .slice(0, 3);
+  return { run, site: site!, client, findings, stateByFp, proposals, events, metrics, aiAnswers, recentDurations };
 }
 
+// Everything the public report shows, by share token. No internal ids leak:
+// findings are returned without their proposals or actions.
+export async function sharedReport(token: string) {
+  if (!/^[a-z0-9]{18}$/.test(token)) return null;
+  const db = await getDb();
+  const run = await db.query.runs.findFirst({ where: and(eq(schema.runs.shareToken, token), eq(schema.runs.status, "complete")) });
+  if (!run) return null;
+  const [site, findings, metrics, aiAnswers, previous] = await Promise.all([
+    db.query.sites.findFirst({ where: eq(schema.sites.id, run.siteId) }),
+    openFindingsForRun(run.siteId, run.id),
+    db.query.pageMetrics.findMany({ where: eq(schema.pageMetrics.runId, run.id) }),
+    db.query.aiAnswers.findMany({ where: eq(schema.aiAnswers.runId, run.id), orderBy: [asc(schema.aiAnswers.prompt), asc(schema.aiAnswers.engine), asc(schema.aiAnswers.iteration)] }),
+    db.query.runs.findFirst({
+      where: and(eq(schema.runs.siteId, run.siteId), eq(schema.runs.status, "complete"), lt(schema.runs.createdAt, run.createdAt)),
+      orderBy: desc(schema.runs.createdAt),
+      columns: { scoreOverall: true, scores: true, finishedAt: true },
+    }),
+  ]);
+  if (!site) return null;
+  const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId), columns: { name: true } });
+  const done = await db.query.fixProposals.findMany({
+    where: and(eq(schema.fixProposals.siteId, site.id), inArray(schema.fixProposals.status, ["applied", "resolved"])),
+    columns: { title: true, status: true, appliedAt: true },
+  });
+  return { run, site, client, findings, previous: previous ?? null, fixesDone: done.filter((d) => d.appliedAt && d.appliedAt >= run.createdAt), metrics, aiAnswers };
+}
+
+// The client hub: everything the client's tabs show, in one batched fetch.
 export async function clientDetail(clientId: string) {
   const db = await getDb();
   const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
   if (!client) return null;
-  const [sites, connections] = await Promise.all([
+  const [sites, connections, googleConnections] = await Promise.all([
     db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id), orderBy: schema.sites.name }),
     db.query.webflowConnections.findMany({ where: eq(schema.webflowConnections.clientId, client.id), orderBy: desc(schema.webflowConnections.createdAt) }),
+    db.query.googleConnections.findMany({ where: eq(schema.googleConnections.clientId, client.id), orderBy: desc(schema.googleConnections.createdAt) }),
   ]);
-  return { client, sites: await siteCards(sites), connections };
+  const cards = await siteCards(sites);
+  const siteIds = sites.map((s) => s.id);
+  const [runs, proposals, activity] = siteIds.length
+    ? await Promise.all([
+        chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: inArray(schema.runs.siteId, ids), orderBy: desc(schema.runs.createdAt), limit: 60 })),
+        chunked(siteIds, 60, (ids) => db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.siteId, ids), orderBy: desc(schema.fixProposals.createdAt), limit: 150 })),
+        chunked(siteIds, 60, (ids) => db.query.auditLog.findMany({ where: inArray(schema.auditLog.siteId, ids), orderBy: desc(schema.auditLog.createdAt), limit: 15 })),
+      ])
+    : [[], [], []];
+  runs.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  proposals.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  activity.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  const completed = runs.filter((r) => r.status === "complete");
+  const latest = completed[0] ?? null;
+  const previousOfLatest = latest ? (completed.find((r) => r.siteId === latest.siteId && r.id !== latest.id) ?? null) : null;
+  const latestFindings = latest ? await openFindingsForRun(latest.siteId, latest.id) : [];
+  const pendingFixes = proposals.filter((p) => OPEN_PROPOSAL_STATUSES.includes(p.status as (typeof OPEN_PROPOSAL_STATUSES)[number]));
+  return { client, sites: cards, connections, googleConnection: googleConnections.find((g) => !g.revokedAt) ?? null, runs, latest, previousOfLatest, latestFindings, proposals, pendingFixes, activity: activity.slice(0, 15) };
+}
+
+// Just what the client header and tabs need.
+export async function clientHeader(clientId: string) {
+  const db = await getDb();
+  const client = await db.query.clients.findFirst({ where: eq(schema.clients.id, clientId) });
+  if (!client) return null;
+  const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, client.id) });
+  const primary = primarySite(sites);
+  const siteHost = primary ? new URL(primary.baseUrl).host : null;
+  const siteIds = sites.map((s) => s.id);
+  const [live, pending] = siteIds.length
+    ? await Promise.all([
+        chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: and(inArray(schema.runs.siteId, ids), inArray(schema.runs.status, ["queued", "running"])), columns: { id: true, siteId: true } })),
+        chunked(siteIds, 60, (ids) => db.query.fixProposals.findMany({ where: and(inArray(schema.fixProposals.siteId, ids), inArray(schema.fixProposals.status, [...OPEN_PROPOSAL_STATUSES])), columns: { id: true } })),
+      ])
+    : [[], []];
+  const hasCompleted = siteIds.length
+    ? (await chunked(siteIds, 60, (ids) => db.query.runs.findMany({ where: and(inArray(schema.runs.siteId, ids), eq(schema.runs.status, "complete")), columns: { id: true }, limit: 1 }))).length > 0
+    : false;
+  // Active connections whose token is gone (expired, or marked so after a
+  // failed refresh): the person has to connect the workspace again.
+  const activeConnections = await db.query.webflowConnections.findMany({
+    where: and(eq(schema.webflowConnections.clientId, client.id), isNull(schema.webflowConnections.revokedAt)),
+    columns: { id: true, expiresAt: true, label: true },
+  });
+  const nowIso = new Date().toISOString();
+  const lostConnections = activeConnections.filter((c) => c.expiresAt && c.expiresAt <= nowIso).length;
+  return { client, siteHost, siteCount: sites.length, connectedCount: sites.filter((s) => s.connectionId).length, running: live, pendingFixes: pending.length, hasCompleted, lostConnections };
 }
 
 export async function proposalDetail(proposalId: string) {
@@ -178,7 +280,8 @@ export async function proposalDetail(proposalId: string) {
     proposal.findingId ? db.query.findings.findFirst({ where: eq(schema.findings.id, proposal.findingId) }) : Promise.resolve(undefined),
     db.query.runEvents.findMany({ where: eq(schema.runEvents.streamId, proposal.id), orderBy: asc(schema.runEvents.seq), limit: 300 }),
   ]);
-  return { proposal, site: site!, finding: finding ?? null, events };
+  const client = site ? await db.query.clients.findFirst({ where: eq(schema.clients.id, site.clientId), columns: { id: true, name: true } }) : null;
+  return { proposal, site: site!, client: client ?? null, finding: finding ?? null, events };
 }
 
 // Events after a sequence number, for live polling.
@@ -209,8 +312,27 @@ export async function pendingFixesAcrossPortfolio(): Promise<(FixProposal & { si
   return withSites(rows);
 }
 
-export async function pendingFixCount(): Promise<number> {
+// Fixes a client or team member approved that Beqi still has to apply.
+export async function toApplyCount(): Promise<number> {
   const db = await getDb();
+  const rows = await db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.status, ["client_approved", "approved"]), columns: { id: true } });
+  return rows.length;
+}
+
+// Open proposals across the portfolio, or, for a client user, the ones
+// waiting for that client's decision.
+export async function pendingFixCount(clientId: string | null = null): Promise<number> {
+  const db = await getDb();
+  if (clientId) {
+    const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, clientId), columns: { id: true } });
+    if (!sites.length) return 0;
+    const rows = await chunked(
+      sites.map((s) => s.id),
+      60,
+      (ids) => db.query.fixProposals.findMany({ where: and(inArray(schema.fixProposals.siteId, ids), eq(schema.fixProposals.status, "proposed")), columns: { id: true } }),
+    );
+    return rows.length;
+  }
   const rows = await db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.status, [...OPEN_PROPOSAL_STATUSES]), columns: { id: true } });
   return rows.length;
 }
@@ -234,3 +356,312 @@ export async function recentRuns(limit = 20): Promise<(Run & { site: Site | unde
 
 export { SUPPRESSED };
 export type { WebflowConnection };
+
+// The AEO loop: how AI assistants answered the client's questions over the
+// last audits, per site and per question, plus the open inaccurate claims and
+// the content fixes in flight.
+export interface AiTrendRun {
+  runId: string;
+  finishedAt: string | null;
+  answers: number;
+  mentioned: number;
+  cited: number;
+  recommended: number;
+  inaccuracies: number;
+}
+
+export interface AiPromptTrend {
+  prompt: string;
+  // One cell per run (same order as `runs`): mentioned / answers, or null when
+  // the question was not asked in that run.
+  cells: { mentioned: number; cited: number; answers: number }[] | null[];
+  latestIssues: string[];
+}
+
+export interface SiteAiTrend {
+  site: Site;
+  runs: AiTrendRun[]; // oldest first
+  prompts: AiPromptTrend[];
+  openClaims: Finding[];
+  contentFixes: FixProposal[];
+}
+
+export async function clientAiTrend(clientId: string): Promise<SiteAiTrend[]> {
+  const db = await getDb();
+  const sites = await db.query.sites.findMany({ where: eq(schema.sites.clientId, clientId), orderBy: schema.sites.name });
+  const out: SiteAiTrend[] = [];
+  for (const site of sites) {
+    const completed = await db.query.runs.findMany({ where: and(eq(schema.runs.siteId, site.id), eq(schema.runs.status, "complete")), orderBy: desc(schema.runs.createdAt), limit: 8 });
+    const withSample = completed.filter((r) => r.summary?.aiVisibility && r.summary.aiVisibility.answers > 0).reverse();
+    const runIds = withSample.map((r) => r.id);
+    const [answers, claims, fixes] = await Promise.all([
+      runIds.length ? db.query.aiAnswers.findMany({ where: inArray(schema.aiAnswers.runId, runIds) }) : Promise.resolve([]),
+      completed[0] ? db.query.findings.findMany({ where: and(eq(schema.findings.runId, completed[0].id), eq(schema.findings.checkId, "ai.inaccurate-claim"), eq(schema.findings.ignored, false)) }) : Promise.resolve([]),
+      db.query.fixProposals.findMany({ where: and(eq(schema.fixProposals.siteId, site.id), eq(schema.fixProposals.action, "content_text")), orderBy: desc(schema.fixProposals.createdAt), limit: 30 }),
+    ]);
+    const states = claims.length ? await db.query.findingStates.findMany({ where: and(eq(schema.findingStates.siteId, site.id), inArray(schema.findingStates.fingerprint, claims.map((c) => c.fingerprint))) }) : [];
+    const suppressed = new Set(states.filter((s) => SUPPRESSED.has(s.status)).map((s) => s.fingerprint));
+    const runs: AiTrendRun[] = withSample.map((r) => {
+      const v = r.summary!.aiVisibility!;
+      return { runId: r.id, finishedAt: r.finishedAt, answers: v.answers, mentioned: v.mentioned, cited: v.cited, recommended: v.recommended, inaccuracies: v.inaccuracies };
+    });
+    // Questions from the latest sample first; older-only questions after.
+    const latestId = runIds[runIds.length - 1];
+    const order: string[] = [];
+    for (const a of answers.filter((x) => x.runId === latestId)) if (!order.includes(a.prompt)) order.push(a.prompt);
+    for (const a of answers) if (!order.includes(a.prompt)) order.push(a.prompt);
+    const prompts: AiPromptTrend[] = order.map((prompt) => {
+      const cells = runIds.map((rid) => {
+        const list = answers.filter((a) => a.runId === rid && a.prompt === prompt);
+        return list.length ? { mentioned: list.filter((a) => a.mentioned).length, cited: list.filter((a) => a.cited).length, answers: list.length } : null;
+      });
+      const latestIssues = [...new Set(answers.filter((a) => a.runId === latestId && a.prompt === prompt).flatMap((a) => a.issues))];
+      return { prompt, cells: cells as AiPromptTrend["cells"], latestIssues };
+    });
+    out.push({ site, runs, prompts, openClaims: claims.filter((c) => !suppressed.has(c.fingerprint)), contentFixes: fixes });
+  }
+  return out;
+}
+
+
+// ---- Changes: what each audit fixed and found ----------------------------------
+
+export interface ChangeItem {
+  kind: "fixed" | "new" | "open" | "checked";
+  title: string;
+  detail: string | null;
+  pagePath: string | null;
+  severity: Finding["severity"] | null;
+  findingId: string | null;
+  proposalId: string | null;
+}
+
+export interface AuditChanges {
+  run: Run;
+  previous: Run | null;
+  items: ChangeItem[];
+}
+
+export interface SiteChanges {
+  audits: AuditChanges[]; // newest first
+  month: { fixed: number; found: number; scoreStart: number | null; scoreNow: number | null; pagesChecked: number | null; fixedByBeqi: number; fixedByClient: number };
+}
+
+// For the last few completed audits: findings that disappeared since the
+// previous audit (fixed), findings first seen in this audit (new), and what
+// the URL inventory confirmed. Ignored findings are left out of both.
+export async function siteChanges(siteId: string, limit = 6): Promise<SiteChanges> {
+  const db = await getDb();
+  const runs = await db.query.runs.findMany({ where: and(eq(schema.runs.siteId, siteId), eq(schema.runs.status, "complete")), orderBy: desc(schema.runs.createdAt), limit: limit + 1 });
+  if (runs.length === 0) return { audits: [], month: { fixed: 0, found: 0, scoreStart: null, scoreNow: null, pagesChecked: null, fixedByBeqi: 0, fixedByClient: 0 } };
+  const runIds = runs.map((r) => r.id);
+  const [findings, states, proposals, clientUsers] = await Promise.all([
+    chunked(runIds, 30, (ids) => db.query.findings.findMany({ where: and(inArray(schema.findings.runId, ids), eq(schema.findings.ignored, false)) })),
+    db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, siteId) }),
+    db.query.fixProposals.findMany({ where: eq(schema.fixProposals.siteId, siteId), orderBy: desc(schema.fixProposals.createdAt), limit: 200 }),
+    db.query.users.findMany({ where: eq(schema.users.role, "client"), columns: { email: true } }),
+  ]);
+  const suppressed = new Set(states.filter((s) => s.status === "ignored" || s.status === "false_positive").map((s) => s.fingerprint));
+  const byRun = new Map<string, Finding[]>();
+  for (const f of findings) {
+    if (suppressed.has(f.fingerprint)) continue;
+    if (!byRun.has(f.runId)) byRun.set(f.runId, []);
+    byRun.get(f.runId)!.push(f);
+  }
+  const proposalFor = (fp: string) => proposals.find((p) => p.fingerprint === fp && (p.status === "applied" || p.status === "resolved")) ?? proposals.find((p) => p.fingerprint === fp) ?? null;
+  const audits: AuditChanges[] = [];
+  for (let i = 0; i < Math.min(limit, runs.length); i++) {
+    const run = runs[i];
+    const previous = runs[i + 1] ?? null;
+    const now = byRun.get(run.id) ?? [];
+    const before = previous ? (byRun.get(previous.id) ?? []) : [];
+    const nowFps = new Set(now.map((f) => f.fingerprint));
+    const beforeFps = new Set(before.map((f) => f.fingerprint));
+    const items: ChangeItem[] = [];
+    for (const f of before) {
+      if (nowFps.has(f.fingerprint)) continue;
+      const p = proposalFor(f.fingerprint);
+      items.push({ kind: "fixed", title: f.title, detail: p ? (p.status === "resolved" ? `Fixed by hand${p.appliedBy ? ` by ${clientUsers.some((u) => u.email === p.appliedBy) ? "your team" : "Beqi"}` : ""}; this audit confirmed it.` : p.status === "applied" ? `Approved${p.approvedBy ? ` by ${clientUsers.some((u) => u.email === p.approvedBy) ? "you" : "Beqi"}` : ""}, applied by Beqi, confirmed in this audit.` : "Gone since the previous audit; this audit confirmed it.") : "Gone since the previous audit; this audit confirmed it.", pagePath: f.pagePath, severity: f.severity, findingId: null, proposalId: p?.id ?? null });
+    }
+    for (const f of now) {
+      if (previous && beforeFps.has(f.fingerprint)) continue;
+      if (!previous && !(f.severity === "critical" || f.severity === "high")) continue;
+      const p = proposals.find((x) => x.fingerprint === f.fingerprint && x.status === "proposed") ?? null;
+      items.push({ kind: "new", title: f.title, detail: f.detail, pagePath: f.pagePath, severity: f.severity, findingId: f.id, proposalId: p?.id ?? null });
+    }
+    if (previous) {
+      for (const f of now) {
+        if (!beforeFps.has(f.fingerprint) || !(f.severity === "critical" || f.severity === "high")) continue;
+        const p = proposals.find((x) => x.fingerprint === f.fingerprint && (x.status === "proposed" || x.status === "client_approved" || x.status === "approved")) ?? null;
+        items.push({ kind: "open", title: f.title, detail: p ? (p.status === "proposed" ? "A fix is waiting for approval." : "Approved; Beqi applies it next.") : f.detail, pagePath: f.pagePath, severity: f.severity, findingId: f.id, proposalId: p?.id ?? null });
+      }
+    }
+    const inv = run.summary?.inventory;
+    if (inv) {
+      const c = inv.changes;
+      items.push({
+        kind: "checked",
+        title: c && (c.gone || c.redirected || c.noindexed) ? `${inv.pages} pages checked: ${c.gone} gone, ${c.redirected} redirecting, ${c.noindexed} noindex` : `All ${inv.pages} pages still load`,
+        detail: c && (c.gone || c.redirected || c.noindexed) ? "Details in the findings above." : `${inv.broken ? `${inv.broken} broken URL${inv.broken === 1 ? "" : "s"}; ` : "No page disappeared, redirected or went noindex. "}Sitemap ${inv.sitemapOk ? "and robots.txt in order" : "or robots.txt needs a look"}.`,
+        pagePath: null,
+        severity: null,
+        findingId: null,
+        proposalId: null,
+      });
+    }
+    const order = { fixed: 0, new: 1, open: 2, checked: 3 } as const;
+    items.sort((a, b) => order[a.kind] - order[b.kind]);
+    audits.push({ run, previous, items });
+  }
+  // This month in numbers.
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const ms = monthStart.toISOString();
+  const thisMonth = runs.filter((r) => r.createdAt >= ms);
+  const fixed = thisMonth.reduce((a, r) => a + (r.summary?.resolvedFindings ?? 0), 0);
+  const found = thisMonth.reduce((a, r) => a + (r.summary?.newFindings ?? 0), 0);
+  const appliedThisMonth = proposals.filter((p) => (p.status === "applied" || p.status === "resolved") && p.appliedAt && p.appliedAt >= ms);
+  const fixedByClient = appliedThisMonth.filter((p) => p.status === "resolved" && p.appliedBy && clientUsers.some((u) => u.email === p.appliedBy)).length;
+  const scoreStart = runs.find((r) => r.createdAt < ms)?.scoreOverall ?? (thisMonth.length ? (thisMonth[thisMonth.length - 1].scoreOverall ?? null) : null);
+  return {
+    audits,
+    month: { fixed, found, scoreStart, scoreNow: runs[0].scoreOverall ?? null, pagesChecked: runs[0].summary?.inventory?.pages ?? null, fixedByBeqi: appliedThisMonth.length - fixedByClient, fixedByClient },
+  };
+}
+
+// Every fix with where it stands: proposed → approved → applied → confirmed
+// (the next audit no longer found the issue).
+export interface FixStep {
+  proposal: FixProposal;
+  confirmedAt: string | null;
+}
+
+export async function fixSteps(siteId: string, limit = 12): Promise<FixStep[]> {
+  const db = await getDb();
+  const proposals = await db.query.fixProposals.findMany({ where: eq(schema.fixProposals.siteId, siteId), orderBy: desc(schema.fixProposals.createdAt), limit });
+  if (!proposals.length) return [];
+  const states = await db.query.findingStates.findMany({ where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.fingerprint, proposals.map((p) => p.fingerprint))) });
+  const runIds = [...new Set(states.map((s) => s.resolvedRunId).filter((x): x is string => !!x))];
+  const runs = runIds.length ? await db.query.runs.findMany({ where: inArray(schema.runs.id, runIds), columns: { id: true, finishedAt: true, createdAt: true } }) : [];
+  return proposals.map((proposal) => {
+    const st = states.find((s) => s.fingerprint === proposal.fingerprint);
+    const run = st?.status === "fixed" && st.resolvedRunId ? runs.find((r) => r.id === st.resolvedRunId) : undefined;
+    const at = run ? (run.finishedAt ?? run.createdAt) : null;
+    return { proposal, confirmedAt: at && (!proposal.appliedAt || at >= proposal.appliedAt) ? at : null };
+  });
+}
+
+// ---- The team's home: what needs the team today, one row per client ----------
+
+export interface ClientRow {
+  client: Client;
+  site: Site | null;
+  score: number | null;
+  delta30: number | null;
+  need: { label: string; tone: "critical" | "warn" | "accent" | "neutral"; href: string };
+  lastAudit: string | null;
+  running: boolean;
+  nextRunAt: string | null;
+  auditsOff: boolean;
+  lead: string | null;
+}
+
+export interface PortfolioHome {
+  rows: ClientRow[];
+  today: { toApply: number; toApplyByClient: { name: string; n: number }[]; toApplyOldestDays: number | null; waitingOnClients: number; waitingLongest: { name: string; days: number } | null; needsPerson: { name: string; why: string; href: string }[] };
+  month: { applied: number; appliedByClients: number; resolved: number; found: number; audits: number; costUsd: number; reportsSent: number; clients: number };
+}
+
+export async function portfolioHome(): Promise<PortfolioHome> {
+  const db = await getDb();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const prevKey = `${new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).getUTCFullYear()}-${String(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).getUTCMonth() + 1).padStart(2, "0")}`;
+  const [clients, sites, connections, openProposals, monthRuns, appliedMonth, clientUsers] = await Promise.all([
+    db.query.clients.findMany({ orderBy: schema.clients.name }),
+    db.query.sites.findMany(),
+    db.query.webflowConnections.findMany({ where: isNull(schema.webflowConnections.revokedAt) }),
+    db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.status, ["proposed", "client_approved", "approved", "applying"]) }),
+    db.query.runs.findMany({ where: gt(schema.runs.createdAt, monthStart), orderBy: desc(schema.runs.createdAt), limit: 300 }),
+    db.query.fixProposals.findMany({ where: and(inArray(schema.fixProposals.status, ["applied", "resolved"]), gt(schema.fixProposals.appliedAt, monthStart)), columns: { appliedBy: true, approvedBy: true, siteId: true } }),
+    db.query.users.findMany({ where: eq(schema.users.role, "client"), columns: { email: true } }),
+  ]);
+  const clientEmails = new Set(clientUsers.map((u) => u.email));
+  const siteById = new Map(sites.map((s) => [s.id, s]));
+  const siteOfClient = (clientId: string) => primarySite(sites.filter((s) => s.clientId === clientId));
+  // Scores: latest complete run per site and the last one at least 30 days older.
+  const allRuns = await db.query.runs.findMany({ where: eq(schema.runs.status, "complete"), orderBy: desc(schema.runs.createdAt), limit: 600, columns: { id: true, siteId: true, scoreOverall: true, createdAt: true, finishedAt: true, status: true } });
+  const liveRuns = await db.query.runs.findMany({ where: inArray(schema.runs.status, ["queued", "running"]), columns: { siteId: true } });
+  const dayMs = 86_400_000;
+  const since30 = new Date(now.getTime() - 30 * dayMs).toISOString();
+  const rows: ClientRow[] = clients.map((client) => {
+    const site = siteOfClient(client.id);
+    const runs = site ? allRuns.filter((r) => r.siteId === site.id) : [];
+    const latest = runs[0] ?? null;
+    const before = runs.find((r) => r.createdAt <= since30) ?? null;
+    const conns = connections.filter((c) => c.clientId === client.id);
+    const lost = conns.some((c) => c.expiresAt && c.expiresAt <= nowIso);
+    const mine = site ? openProposals.filter((p) => p.siteId === site.id) : [];
+    const toApply = mine.filter((p) => p.status === "client_approved" || p.status === "approved");
+    const waiting = mine.filter((p) => p.status === "proposed");
+    const oldestWaiting = waiting.length ? Math.floor((now.getTime() - new Date(waiting.reduce((a, p) => (p.createdAt < a ? p.createdAt : a), waiting[0].createdAt)).getTime()) / dayMs) : 0;
+    const base = `/clients/${client.id}`;
+    let need: ClientRow["need"];
+    if (!site) need = { label: conns.length ? "Choose the site" : "Connect Webflow", tone: "critical", href: `${base}/settings` };
+    else if (lost || !site.connectionId) need = { label: "Reconnect Webflow", tone: "critical", href: `${base}/settings` };
+    else if (toApply.length) need = { label: `Apply ${toApply.length} approved fix${toApply.length === 1 ? "" : "es"}`, tone: "accent", href: `${base}/fixes` };
+    else if (waiting.length) need = { label: `${waiting.length} waiting on client${oldestWaiting >= 7 ? `, ${oldestWaiting} days` : ""}`, tone: oldestWaiting >= 7 ? "warn" : "neutral", href: `${base}/fixes` };
+    else if (!latest) need = { label: "Run the first audit", tone: "warn", href: base };
+    else need = { label: "Nothing from us", tone: "neutral", href: base };
+    return {
+      client,
+      site,
+      score: latest?.scoreOverall ?? null,
+      delta30: latest?.scoreOverall != null && before?.scoreOverall != null && before.id !== latest.id ? latest.scoreOverall - before.scoreOverall : null,
+      need,
+      lastAudit: latest?.finishedAt ?? latest?.createdAt ?? null,
+      running: !!site && liveRuns.some((r) => r.siteId === site.id),
+      nextRunAt: site?.auditFrequency === "off" ? null : (site?.nextRunAt ?? null),
+      auditsOff: !site || site.auditFrequency === "off",
+      lead: client.leadName,
+    };
+  });
+  const toneRank = { critical: 0, accent: 1, warn: 2, neutral: 3 } as const;
+  rows.sort((a, b) => toneRank[a.need.tone] - toneRank[b.need.tone] || a.client.name.localeCompare(b.client.name));
+
+  const toApplyAll = openProposals.filter((p) => p.status === "client_approved" || p.status === "approved");
+  const nameOfSite = (siteId: string) => clients.find((c) => c.id === siteById.get(siteId)?.clientId)?.name ?? "—";
+  const byClient = new Map<string, number>();
+  for (const p of toApplyAll) byClient.set(nameOfSite(p.siteId), (byClient.get(nameOfSite(p.siteId)) ?? 0) + 1);
+  const waitingAll = openProposals.filter((p) => p.status === "proposed");
+  let waitingLongest: PortfolioHome["today"]["waitingLongest"] = null;
+  for (const p of waitingAll) {
+    const days = Math.floor((now.getTime() - new Date(p.createdAt).getTime()) / dayMs);
+    if (!waitingLongest || days > waitingLongest.days) waitingLongest = { name: nameOfSite(p.siteId), days };
+  }
+  const needsPerson = rows.filter((r) => r.need.tone === "critical").map((r) => ({ name: r.client.name, why: r.need.label, href: r.need.href }));
+  const costUsd = monthRuns.reduce((a, r) => a + (r.usage?.estimatedCostUsd ?? 0), 0);
+  return {
+    rows,
+    today: {
+      toApply: toApplyAll.length,
+      toApplyByClient: [...byClient.entries()].map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n),
+      toApplyOldestDays: toApplyAll.length ? Math.floor((now.getTime() - new Date(toApplyAll.reduce((a, p) => (p.createdAt < a ? p.createdAt : a), toApplyAll[0].createdAt)).getTime()) / dayMs) : null,
+      waitingOnClients: waitingAll.length,
+      waitingLongest,
+      needsPerson,
+    },
+    month: {
+      applied: appliedMonth.length,
+      appliedByClients: appliedMonth.filter((p) => (p.appliedBy && clientEmails.has(p.appliedBy)) || (p.approvedBy && clientEmails.has(p.approvedBy))).length,
+      resolved: monthRuns.reduce((a, r) => a + (r.summary?.resolvedFindings ?? 0), 0),
+      found: monthRuns.reduce((a, r) => a + (r.summary?.newFindings ?? 0), 0),
+      audits: monthRuns.filter((r) => r.status === "complete").length,
+      costUsd,
+      reportsSent: clients.filter((c) => c.monthlyReportSentFor === prevKey).length,
+      clients: clients.length,
+    },
+  };
+}

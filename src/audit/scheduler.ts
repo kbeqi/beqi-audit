@@ -1,16 +1,24 @@
 import { and, eq, gt, isNotNull, lte, ne, or, isNull } from "drizzle-orm";
 import { dbFromEnv, schema } from "@/db";
-import { parseRecipients, reminderEmail, sendEmail } from "@/lib/email";
+import { newId } from "@/lib/id";
+import { monthlyEmail, parseRecipients, reminderEmail, sendEmail } from "@/lib/email";
+import { clientProgress, previousMonth } from "@/lib/progress";
+import { monthlySlack, postSlack, slackConfigured } from "@/lib/slack";
+import { syncAllStats, windowTotals } from "@/lib/google/sync";
 import { appUrl } from "@/lib/env";
+import { ensureFreshConnection } from "@/lib/webflow/mcp-oauth";
 import { nextRunAfter, startRun } from "./start";
 
 const REMINDER_WINDOW_MS = 26 * 60 * 60 * 1000;
 
-// Cron tick (hourly). Starts a run for every site whose schedule is due and
-// moves next_run_at forward before starting so a slow run can't double-fire.
-// Then sends one reminder per upcoming scheduled audit (about a day ahead).
-export async function runScheduler(env: CloudflareEnv, now: Date): Promise<{ started: string[]; reminders: number }> {
+// Cron tick (every 20 minutes). Keeps Webflow tokens alive, starts a run for
+// every site whose schedule is due (next_run_at moves forward before starting
+// so a slow run can't double-fire), then sends one reminder per upcoming
+// scheduled audit (about a day ahead). Every part is idempotent, so a more
+// frequent tick is safe.
+export async function runScheduler(env: CloudflareEnv, now: Date): Promise<{ started: string[]; reminders: number; refreshed: number; monthly: number }> {
   const db = dbFromEnv(env);
+  const refreshed = await keepConnectionsAlive(env, now);
   const due = await db.query.sites.findMany({
     where: and(
       ne(schema.sites.auditFrequency, "off"),
@@ -55,5 +63,112 @@ export async function runScheduler(env: CloudflareEnv, now: Date): Promise<{ sta
     );
     if (result === "sent") reminders++;
   }
-  return { started, reminders };
+  // Google data for yesterday is in by the early morning (UTC); sync once a
+  // day from 05:00 on, before the monthly report so it has the numbers.
+  if (now.getUTCHours() >= 5) await syncAllStats(env, now).catch((e) => console.error("stats sync failed", e));
+  const monthly = await sendMonthlyReports(env, now);
+  return { started, reminders, refreshed, monthly };
+}
+
+// On the first of each month (UTC), one progress report per client who has
+// somewhere to receive it: last month's scores then and now, fixes applied,
+// issues resolved, what is waiting. `monthly_report_sent_for` is set before
+// sending so a failing provider can't repeat it on the next tick.
+export async function sendMonthlyReports(env: CloudflareEnv, now: Date, force = false, onlyClientId?: string): Promise<number> {
+  if (!force && now.getUTCDate() !== 1) return 0;
+  const db = dbFromEnv(env);
+  const { since, until, key, label } = previousMonth(now);
+  const clients = await db.query.clients.findMany({ where: onlyClientId ? eq(schema.clients.id, onlyClientId) : eq(schema.clients.notifyMonthly, true) });
+  let sent = 0;
+  for (const client of clients) {
+    if (client.monthlyReportSentFor === key) continue;
+    const to = parseRecipients(client.notifyEmail);
+    const slack = slackConfigured(client.slackWebhookUrl) ? client.slackWebhookUrl : null;
+    await db.update(schema.clients).set({ monthlyReportSentFor: key }).where(eq(schema.clients.id, client.id));
+    if (to.length === 0 && !slack) continue;
+    const progress = await clientProgress(db, client.id, since, until);
+    // Nothing audited yet: no report, nothing to say.
+    if (progress.sites.every((s) => s.score == null)) continue;
+    const link = `${appUrl(env)}/clients/${client.id}`;
+    // Search and traffic for the month vs the month before, when synced.
+    const startIso = since.toISOString().slice(0, 10);
+    const endIso = new Date(until.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const prevSince = new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth() - 1, 1));
+    const prevStartIso = prevSince.toISOString().slice(0, 10);
+    const prevEndIso = new Date(since.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const traffic = await Promise.all(
+      progress.sites.map(async (s) => {
+        const [cur, prev] = await Promise.all([windowTotals(db, s.siteId, startIso, endIso), windowTotals(db, s.siteId, prevStartIso, prevEndIso)]);
+        return cur ? { siteId: s.siteId, cur, prev } : null;
+      }),
+    );
+    if (to.length) {
+      const r = await sendEmail(
+        env,
+        "monthly",
+        monthlyEmail({
+          to,
+          clientName: client.name,
+          month: label,
+          sites: progress.sites.map((s) => {
+            const t = traffic.find((x) => x?.siteId === s.siteId) ?? null;
+            return {
+              name: s.name,
+              score: s.score,
+              scoreBefore: s.scoreBefore,
+              openFindings: s.openFindings,
+              openBefore: s.openBefore,
+              vitals: s.vitalsPassing,
+              ai: s.aiMentioned ? { now: s.aiMentioned.now, of: s.aiMentioned.of, before: s.aiMentioned.before } : null,
+              traffic: t ? { clicks: t.cur.clicks, clicksBefore: t.prev?.clicks ?? null, sessions: t.cur.sessions, sessionsBefore: t.prev?.sessions ?? null, aiSessions: t.cur.aiSessions, aiSessionsBefore: t.prev?.aiSessions ?? null, keyEvents: t.cur.keyEvents, position: t.cur.position, positionBefore: t.prev?.position ?? null } : null,
+            };
+          }),
+          fixesApplied: progress.fixesAppliedTitles,
+          resolved: progress.resolved,
+          waiting: progress.waiting,
+          audits: progress.audits,
+          leadName: client.leadName,
+          leadEmail: client.leadEmail,
+          appUrl: appUrl(env),
+          clientId: client.id,
+        }),
+      );
+      if (r === "sent") sent++;
+    }
+    if (slack) {
+      const ai = progress.sites.find((s) => s.aiMentioned)?.aiMentioned ?? null;
+      await postSlack(env, slack, "monthly", monthlySlack({ clientName: client.name, month: label, sites: progress.sites.map((s) => ({ name: s.name, score: s.score, scoreBefore: s.scoreBefore })), fixesApplied: progress.fixesApplied, resolved: progress.resolved, waiting: progress.waiting, aiMentioned: ai ? { now: ai.now, of: ai.of } : null, link }));
+    }
+  }
+  return sent;
+}
+
+// Webflow's MCP refresh tokens only work while the access token is still
+// valid: once a token has expired, the grant is gone and the workspace must
+// be connected again by a person. Tokens last an hour, so every tick refreshes
+// any active connection with under 45 minutes left (ensureFreshConnection's
+// threshold), keeping idle connections alive between audits.
+async function keepConnectionsAlive(env: CloudflareEnv, now: Date): Promise<number> {
+  const db = dbFromEnv(env);
+  const connections = await db.query.webflowConnections.findMany({ where: and(isNull(schema.webflowConnections.revokedAt), eq(schema.webflowConnections.authKind, "mcp_oauth")) });
+  let refreshed = 0;
+  for (const c of connections) {
+    if (!c.expiresAt || !c.refreshToken) continue;
+    if (new Date(c.expiresAt).getTime() <= now.getTime()) continue; // already lost; needs a reconnect
+    try {
+      const fresh = await ensureFreshConnection(env, c);
+      if (fresh.expiresAt !== c.expiresAt) refreshed++;
+    } catch (e) {
+      // Mark the token expired right away so the client pages say "reconnect"
+      // instead of waiting for the nominal expiry to pass.
+      await db.update(schema.webflowConnections).set({ expiresAt: now.toISOString() }).where(eq(schema.webflowConnections.id, c.id));
+      await db.insert(schema.auditLog).values({
+        id: newId(),
+        actor: "system",
+        action: "webflow.refresh_failed",
+        detail: { connectionId: c.id, clientId: c.clientId, error: String((e as Error).message ?? e).slice(0, 300) },
+      });
+    }
+  }
+  return refreshed;
 }

@@ -67,8 +67,14 @@ export function nextRunAfter(freq: AuditFrequency, from = new Date()): string | 
     case "daily":
       d.setUTCDate(d.getUTCDate() + 1);
       break;
+    case "every3days":
+      d.setUTCDate(d.getUTCDate() + 3);
+      break;
     case "weekly":
       d.setUTCDate(d.getUTCDate() + 7);
+      break;
+    case "biweekly":
+      d.setUTCDate(d.getUTCDate() + 14);
       break;
     case "monthly":
       d.setUTCMonth(d.getUTCMonth() + 1);
