@@ -45,6 +45,7 @@ export default async function ClientAi({ params, searchParams }: { params: Promi
 
   return (
     <div className="space-y-6">
+      <h1 className="sr-only">{data.client.name} · AI answers check</h1>
       <ClientNotices q={q} />
       <Card>
         <CardHeader title="AI answers check" description="Once a month, AI assistants (Perplexity and Claude) are asked a fixed set of questions a prospective customer would ask. This page shows which questions the brand is named in, cited for or recommended on, how that moves month to month, and what is being changed on the site in response. Answers vary from day to day: read this as a direction, not a score." />

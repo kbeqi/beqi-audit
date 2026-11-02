@@ -312,6 +312,13 @@ export async function pendingFixesAcrossPortfolio(): Promise<(FixProposal & { si
   return withSites(rows);
 }
 
+// Fixes a client or team member approved that Beqi still has to apply.
+export async function toApplyCount(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.status, ["client_approved", "approved"]), columns: { id: true } });
+  return rows.length;
+}
+
 // Open proposals across the portfolio, or, for a client user, the ones
 // waiting for that client's decision.
 export async function pendingFixCount(clientId: string | null = null): Promise<number> {
@@ -414,4 +421,247 @@ export async function clientAiTrend(clientId: string): Promise<SiteAiTrend[]> {
     out.push({ site, runs, prompts, openClaims: claims.filter((c) => !suppressed.has(c.fingerprint)), contentFixes: fixes });
   }
   return out;
+}
+
+
+// ---- Changes: what each audit fixed and found ----------------------------------
+
+export interface ChangeItem {
+  kind: "fixed" | "new" | "open" | "checked";
+  title: string;
+  detail: string | null;
+  pagePath: string | null;
+  severity: Finding["severity"] | null;
+  findingId: string | null;
+  proposalId: string | null;
+}
+
+export interface AuditChanges {
+  run: Run;
+  previous: Run | null;
+  items: ChangeItem[];
+}
+
+export interface SiteChanges {
+  audits: AuditChanges[]; // newest first
+  month: { fixed: number; found: number; scoreStart: number | null; scoreNow: number | null; pagesChecked: number | null; fixedByBeqi: number; fixedByClient: number };
+}
+
+// For the last few completed audits: findings that disappeared since the
+// previous audit (fixed), findings first seen in this audit (new), and what
+// the URL inventory confirmed. Ignored findings are left out of both.
+export async function siteChanges(siteId: string, limit = 6): Promise<SiteChanges> {
+  const db = await getDb();
+  const runs = await db.query.runs.findMany({ where: and(eq(schema.runs.siteId, siteId), eq(schema.runs.status, "complete")), orderBy: desc(schema.runs.createdAt), limit: limit + 1 });
+  if (runs.length === 0) return { audits: [], month: { fixed: 0, found: 0, scoreStart: null, scoreNow: null, pagesChecked: null, fixedByBeqi: 0, fixedByClient: 0 } };
+  const runIds = runs.map((r) => r.id);
+  const [findings, states, proposals, clientUsers] = await Promise.all([
+    chunked(runIds, 30, (ids) => db.query.findings.findMany({ where: and(inArray(schema.findings.runId, ids), eq(schema.findings.ignored, false)) })),
+    db.query.findingStates.findMany({ where: eq(schema.findingStates.siteId, siteId) }),
+    db.query.fixProposals.findMany({ where: eq(schema.fixProposals.siteId, siteId), orderBy: desc(schema.fixProposals.createdAt), limit: 200 }),
+    db.query.users.findMany({ where: eq(schema.users.role, "client"), columns: { email: true } }),
+  ]);
+  const suppressed = new Set(states.filter((s) => s.status === "ignored" || s.status === "false_positive").map((s) => s.fingerprint));
+  const byRun = new Map<string, Finding[]>();
+  for (const f of findings) {
+    if (suppressed.has(f.fingerprint)) continue;
+    if (!byRun.has(f.runId)) byRun.set(f.runId, []);
+    byRun.get(f.runId)!.push(f);
+  }
+  const proposalFor = (fp: string) => proposals.find((p) => p.fingerprint === fp && (p.status === "applied" || p.status === "resolved")) ?? proposals.find((p) => p.fingerprint === fp) ?? null;
+  const audits: AuditChanges[] = [];
+  for (let i = 0; i < Math.min(limit, runs.length); i++) {
+    const run = runs[i];
+    const previous = runs[i + 1] ?? null;
+    const now = byRun.get(run.id) ?? [];
+    const before = previous ? (byRun.get(previous.id) ?? []) : [];
+    const nowFps = new Set(now.map((f) => f.fingerprint));
+    const beforeFps = new Set(before.map((f) => f.fingerprint));
+    const items: ChangeItem[] = [];
+    for (const f of before) {
+      if (nowFps.has(f.fingerprint)) continue;
+      const p = proposalFor(f.fingerprint);
+      items.push({ kind: "fixed", title: f.title, detail: p ? (p.status === "resolved" ? `Fixed by hand${p.appliedBy ? ` by ${clientUsers.some((u) => u.email === p.appliedBy) ? "your team" : "Beqi"}` : ""}; this audit confirmed it.` : p.status === "applied" ? `Approved${p.approvedBy ? ` by ${clientUsers.some((u) => u.email === p.approvedBy) ? "you" : "Beqi"}` : ""}, applied by Beqi, confirmed in this audit.` : "Gone since the previous audit; this audit confirmed it.") : "Gone since the previous audit; this audit confirmed it.", pagePath: f.pagePath, severity: f.severity, findingId: null, proposalId: p?.id ?? null });
+    }
+    for (const f of now) {
+      if (previous && beforeFps.has(f.fingerprint)) continue;
+      if (!previous && !(f.severity === "critical" || f.severity === "high")) continue;
+      const p = proposals.find((x) => x.fingerprint === f.fingerprint && x.status === "proposed") ?? null;
+      items.push({ kind: "new", title: f.title, detail: f.detail, pagePath: f.pagePath, severity: f.severity, findingId: f.id, proposalId: p?.id ?? null });
+    }
+    if (previous) {
+      for (const f of now) {
+        if (!beforeFps.has(f.fingerprint) || !(f.severity === "critical" || f.severity === "high")) continue;
+        const p = proposals.find((x) => x.fingerprint === f.fingerprint && (x.status === "proposed" || x.status === "client_approved" || x.status === "approved")) ?? null;
+        items.push({ kind: "open", title: f.title, detail: p ? (p.status === "proposed" ? "A fix is waiting for approval." : "Approved; Beqi applies it next.") : f.detail, pagePath: f.pagePath, severity: f.severity, findingId: f.id, proposalId: p?.id ?? null });
+      }
+    }
+    const inv = run.summary?.inventory;
+    if (inv) {
+      const c = inv.changes;
+      items.push({
+        kind: "checked",
+        title: c && (c.gone || c.redirected || c.noindexed) ? `${inv.pages} pages checked: ${c.gone} gone, ${c.redirected} redirecting, ${c.noindexed} noindex` : `All ${inv.pages} pages still load`,
+        detail: c && (c.gone || c.redirected || c.noindexed) ? "Details in the findings above." : `${inv.broken ? `${inv.broken} broken URL${inv.broken === 1 ? "" : "s"}; ` : "No page disappeared, redirected or went noindex. "}Sitemap ${inv.sitemapOk ? "and robots.txt in order" : "or robots.txt needs a look"}.`,
+        pagePath: null,
+        severity: null,
+        findingId: null,
+        proposalId: null,
+      });
+    }
+    const order = { fixed: 0, new: 1, open: 2, checked: 3 } as const;
+    items.sort((a, b) => order[a.kind] - order[b.kind]);
+    audits.push({ run, previous, items });
+  }
+  // This month in numbers.
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const ms = monthStart.toISOString();
+  const thisMonth = runs.filter((r) => r.createdAt >= ms);
+  const fixed = thisMonth.reduce((a, r) => a + (r.summary?.resolvedFindings ?? 0), 0);
+  const found = thisMonth.reduce((a, r) => a + (r.summary?.newFindings ?? 0), 0);
+  const appliedThisMonth = proposals.filter((p) => (p.status === "applied" || p.status === "resolved") && p.appliedAt && p.appliedAt >= ms);
+  const fixedByClient = appliedThisMonth.filter((p) => p.status === "resolved" && p.appliedBy && clientUsers.some((u) => u.email === p.appliedBy)).length;
+  const scoreStart = runs.find((r) => r.createdAt < ms)?.scoreOverall ?? (thisMonth.length ? (thisMonth[thisMonth.length - 1].scoreOverall ?? null) : null);
+  return {
+    audits,
+    month: { fixed, found, scoreStart, scoreNow: runs[0].scoreOverall ?? null, pagesChecked: runs[0].summary?.inventory?.pages ?? null, fixedByBeqi: appliedThisMonth.length - fixedByClient, fixedByClient },
+  };
+}
+
+// Every fix with where it stands: proposed → approved → applied → confirmed
+// (the next audit no longer found the issue).
+export interface FixStep {
+  proposal: FixProposal;
+  confirmedAt: string | null;
+}
+
+export async function fixSteps(siteId: string, limit = 12): Promise<FixStep[]> {
+  const db = await getDb();
+  const proposals = await db.query.fixProposals.findMany({ where: eq(schema.fixProposals.siteId, siteId), orderBy: desc(schema.fixProposals.createdAt), limit });
+  if (!proposals.length) return [];
+  const states = await db.query.findingStates.findMany({ where: and(eq(schema.findingStates.siteId, siteId), inArray(schema.findingStates.fingerprint, proposals.map((p) => p.fingerprint))) });
+  const runIds = [...new Set(states.map((s) => s.resolvedRunId).filter((x): x is string => !!x))];
+  const runs = runIds.length ? await db.query.runs.findMany({ where: inArray(schema.runs.id, runIds), columns: { id: true, finishedAt: true, createdAt: true } }) : [];
+  return proposals.map((proposal) => {
+    const st = states.find((s) => s.fingerprint === proposal.fingerprint);
+    const run = st?.status === "fixed" && st.resolvedRunId ? runs.find((r) => r.id === st.resolvedRunId) : undefined;
+    const at = run ? (run.finishedAt ?? run.createdAt) : null;
+    return { proposal, confirmedAt: at && (!proposal.appliedAt || at >= proposal.appliedAt) ? at : null };
+  });
+}
+
+// ---- The team's home: what needs the team today, one row per client ----------
+
+export interface ClientRow {
+  client: Client;
+  site: Site | null;
+  score: number | null;
+  delta30: number | null;
+  need: { label: string; tone: "critical" | "warn" | "accent" | "neutral"; href: string };
+  lastAudit: string | null;
+  running: boolean;
+  nextRunAt: string | null;
+  auditsOff: boolean;
+  lead: string | null;
+}
+
+export interface PortfolioHome {
+  rows: ClientRow[];
+  today: { toApply: number; toApplyByClient: { name: string; n: number }[]; toApplyOldestDays: number | null; waitingOnClients: number; waitingLongest: { name: string; days: number } | null; needsPerson: { name: string; why: string; href: string }[] };
+  month: { applied: number; appliedByClients: number; resolved: number; found: number; audits: number; costUsd: number; reportsSent: number; clients: number };
+}
+
+export async function portfolioHome(): Promise<PortfolioHome> {
+  const db = await getDb();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+  const prevKey = `${new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).getUTCFullYear()}-${String(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).getUTCMonth() + 1).padStart(2, "0")}`;
+  const [clients, sites, connections, openProposals, monthRuns, appliedMonth, clientUsers] = await Promise.all([
+    db.query.clients.findMany({ orderBy: schema.clients.name }),
+    db.query.sites.findMany(),
+    db.query.webflowConnections.findMany({ where: isNull(schema.webflowConnections.revokedAt) }),
+    db.query.fixProposals.findMany({ where: inArray(schema.fixProposals.status, ["proposed", "client_approved", "approved", "applying"]) }),
+    db.query.runs.findMany({ where: gt(schema.runs.createdAt, monthStart), orderBy: desc(schema.runs.createdAt), limit: 300 }),
+    db.query.fixProposals.findMany({ where: and(inArray(schema.fixProposals.status, ["applied", "resolved"]), gt(schema.fixProposals.appliedAt, monthStart)), columns: { appliedBy: true, approvedBy: true, siteId: true } }),
+    db.query.users.findMany({ where: eq(schema.users.role, "client"), columns: { email: true } }),
+  ]);
+  const clientEmails = new Set(clientUsers.map((u) => u.email));
+  const siteById = new Map(sites.map((s) => [s.id, s]));
+  const siteOfClient = (clientId: string) => primarySite(sites.filter((s) => s.clientId === clientId));
+  // Scores: latest complete run per site and the last one at least 30 days older.
+  const allRuns = await db.query.runs.findMany({ where: eq(schema.runs.status, "complete"), orderBy: desc(schema.runs.createdAt), limit: 600, columns: { id: true, siteId: true, scoreOverall: true, createdAt: true, finishedAt: true, status: true } });
+  const liveRuns = await db.query.runs.findMany({ where: inArray(schema.runs.status, ["queued", "running"]), columns: { siteId: true } });
+  const dayMs = 86_400_000;
+  const since30 = new Date(now.getTime() - 30 * dayMs).toISOString();
+  const rows: ClientRow[] = clients.map((client) => {
+    const site = siteOfClient(client.id);
+    const runs = site ? allRuns.filter((r) => r.siteId === site.id) : [];
+    const latest = runs[0] ?? null;
+    const before = runs.find((r) => r.createdAt <= since30) ?? null;
+    const conns = connections.filter((c) => c.clientId === client.id);
+    const lost = conns.some((c) => c.expiresAt && c.expiresAt <= nowIso);
+    const mine = site ? openProposals.filter((p) => p.siteId === site.id) : [];
+    const toApply = mine.filter((p) => p.status === "client_approved" || p.status === "approved");
+    const waiting = mine.filter((p) => p.status === "proposed");
+    const oldestWaiting = waiting.length ? Math.floor((now.getTime() - new Date(waiting.reduce((a, p) => (p.createdAt < a ? p.createdAt : a), waiting[0].createdAt)).getTime()) / dayMs) : 0;
+    const base = `/clients/${client.id}`;
+    let need: ClientRow["need"];
+    if (!site) need = { label: conns.length ? "Choose the site" : "Connect Webflow", tone: "critical", href: `${base}/settings` };
+    else if (lost || !site.connectionId) need = { label: "Reconnect Webflow", tone: "critical", href: `${base}/settings` };
+    else if (toApply.length) need = { label: `Apply ${toApply.length} approved fix${toApply.length === 1 ? "" : "es"}`, tone: "accent", href: `${base}/fixes` };
+    else if (waiting.length) need = { label: `${waiting.length} waiting on client${oldestWaiting >= 7 ? `, ${oldestWaiting} days` : ""}`, tone: oldestWaiting >= 7 ? "warn" : "neutral", href: `${base}/fixes` };
+    else if (!latest) need = { label: "Run the first audit", tone: "warn", href: base };
+    else need = { label: "Nothing from us", tone: "neutral", href: base };
+    return {
+      client,
+      site,
+      score: latest?.scoreOverall ?? null,
+      delta30: latest?.scoreOverall != null && before?.scoreOverall != null && before.id !== latest.id ? latest.scoreOverall - before.scoreOverall : null,
+      need,
+      lastAudit: latest?.finishedAt ?? latest?.createdAt ?? null,
+      running: !!site && liveRuns.some((r) => r.siteId === site.id),
+      nextRunAt: site?.auditFrequency === "off" ? null : (site?.nextRunAt ?? null),
+      auditsOff: !site || site.auditFrequency === "off",
+      lead: client.leadName,
+    };
+  });
+  const toneRank = { critical: 0, accent: 1, warn: 2, neutral: 3 } as const;
+  rows.sort((a, b) => toneRank[a.need.tone] - toneRank[b.need.tone] || a.client.name.localeCompare(b.client.name));
+
+  const toApplyAll = openProposals.filter((p) => p.status === "client_approved" || p.status === "approved");
+  const nameOfSite = (siteId: string) => clients.find((c) => c.id === siteById.get(siteId)?.clientId)?.name ?? "—";
+  const byClient = new Map<string, number>();
+  for (const p of toApplyAll) byClient.set(nameOfSite(p.siteId), (byClient.get(nameOfSite(p.siteId)) ?? 0) + 1);
+  const waitingAll = openProposals.filter((p) => p.status === "proposed");
+  let waitingLongest: PortfolioHome["today"]["waitingLongest"] = null;
+  for (const p of waitingAll) {
+    const days = Math.floor((now.getTime() - new Date(p.createdAt).getTime()) / dayMs);
+    if (!waitingLongest || days > waitingLongest.days) waitingLongest = { name: nameOfSite(p.siteId), days };
+  }
+  const needsPerson = rows.filter((r) => r.need.tone === "critical").map((r) => ({ name: r.client.name, why: r.need.label, href: r.need.href }));
+  const costUsd = monthRuns.reduce((a, r) => a + (r.usage?.estimatedCostUsd ?? 0), 0);
+  return {
+    rows,
+    today: {
+      toApply: toApplyAll.length,
+      toApplyByClient: [...byClient.entries()].map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n),
+      toApplyOldestDays: toApplyAll.length ? Math.floor((now.getTime() - new Date(toApplyAll.reduce((a, p) => (p.createdAt < a ? p.createdAt : a), toApplyAll[0].createdAt)).getTime()) / dayMs) : null,
+      waitingOnClients: waitingAll.length,
+      waitingLongest,
+      needsPerson,
+    },
+    month: {
+      applied: appliedMonth.length,
+      appliedByClients: appliedMonth.filter((p) => (p.appliedBy && clientEmails.has(p.appliedBy)) || (p.approvedBy && clientEmails.has(p.approvedBy))).length,
+      resolved: monthRuns.reduce((a, r) => a + (r.summary?.resolvedFindings ?? 0), 0),
+      found: monthRuns.reduce((a, r) => a + (r.summary?.newFindings ?? 0), 0),
+      audits: monthRuns.filter((r) => r.status === "complete").length,
+      costUsd,
+      reportsSent: clients.filter((c) => c.monthlyReportSentFor === prevKey).length,
+      clients: clients.length,
+    },
+  };
 }

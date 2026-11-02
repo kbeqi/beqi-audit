@@ -100,7 +100,7 @@ export function DecisionButtons({ proposal, back, size = "md", role = "team" }: 
           <input type="hidden" name="decision" value={self ? "apply" : "client_approve"} />
           <input type="hidden" name="back" value={back} />
           <SubmitButton className={`${btnPrimary} ${sm}`} pendingLabel="Saving…" title={self ? "Claude applies this change in Webflow now" : "Beqi applies this change after your approval"}>
-            {self ? "Approve & apply" : "Approve for Beqi to apply"}
+            {self ? "Approve, apply now" : "Approve for Beqi to apply"}
           </SubmitButton>
         </form>
         <form action={decideProposal}>
@@ -108,7 +108,7 @@ export function DecisionButtons({ proposal, back, size = "md", role = "team" }: 
           <input type="hidden" name="decision" value="reject" />
           <input type="hidden" name="back" value={back} />
           <SubmitButton className={`${btnSecondary} ${sm}`} pendingLabel="Saving…" title="Don't make this change">
-            Decline
+            No, leave it
           </SubmitButton>
         </form>
       </div>

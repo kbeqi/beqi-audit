@@ -6,21 +6,18 @@ import { isTeam } from "@/lib/auth";
 import { getDb } from "@/db";
 import type { Severity } from "@/db/schema";
 import { FREQUENCY_LABELS } from "@/db/schema";
-import { clientDetail, primarySite, siteDetail } from "@/lib/queries";
-import { clientProgress, lastDays } from "@/lib/progress";
+import { clientDetail, primarySite, siteChanges, siteDetail } from "@/lib/queries";
 import { statsSummary } from "@/lib/google/sync";
 import { ClientNotices, type ClientSearch } from "@/components/client-notices";
 import { CategorySections } from "@/components/category-sections";
-import { TopIssues } from "@/components/top-issues";
+import { FixFirst } from "@/components/fix-first";
+import { AreaTable } from "@/components/area-table";
 import { Markdown } from "@/components/markdown";
-import { ProposalRow } from "@/components/proposals";
 import { PerformanceCard } from "@/components/insights";
 import { InventoryCard } from "@/components/inventory-card";
 import { TrafficCard } from "@/components/traffic-card";
-import { ProgressCard, type TrafficDelta } from "@/components/progress-card";
-import { humanAction } from "@/lib/activity";
-import { Card, CardHeader, Delta, EmptyState, Notice, ScoreRing, Sparkline, StatTile, StatusPill, btnSecondary, btnSm, fmtCost, fmtDate, fmtDay, fmtDuration, timeAgo, triggerLabel } from "@/components/ui";
-import { SCORED_CATEGORIES, SEVERITY_ORDER } from "@/audit/score";
+import { Card, EmptyState, Notice, ScoreRing, Sparkline, StatusPill, btnSecondary, fmtCost, fmtDate, fmtDay, fmtDuration, timeAgo } from "@/components/ui";
+import { SEVERITY_ORDER } from "@/audit/score";
 
 export const dynamic = "force-dynamic";
 
@@ -28,25 +25,32 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   if (!(await canSeeClient(id))) return { title: "Client" };
   const data = await clientDetail(id);
-  return { title: data ? `${data.client.name} · Overview` : "Client" };
+  return { title: data ? `${data.client.name} · Home` : "Client" };
 }
 
-// The client's home: one site, so this is the site report itself. Score and
-// progress first, then what to fix, every area with its findings, the
-// summary, search and traffic, the fixes waiting, and the history.
-export default async function ClientOverview({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch & { sev?: string }> }) {
+function headline(score: number | null | undefined): string {
+  if (score == null) return "Your site has not been audited yet";
+  if (score >= 90) return "Your site is in good shape";
+  if (score >= 75) return "Your site is doing well, with a few things to fix";
+  if (score >= 55) return "Your site needs some work";
+  return "Your site needs attention";
+}
+
+// The client's home answers three questions in order: how is my site, what
+// changed since last time, what do you need from me. Then every area, the
+// summary, what it is doing for them, and the history.
+export default async function ClientHome({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<ClientSearch & { sev?: string }> }) {
   const { id } = await params;
   const team = isTeam(await requireClientAccess(id, `/clients/${id}`));
   const role = team ? "team" : "client";
   const q = await searchParams;
   const data = await clientDetail(id);
   if (!data) notFound();
-  const { client, sites, connections, pendingFixes, activity } = data;
+  const { client, sites, connections, pendingFixes } = data;
   const site = primarySite(sites.map((s) => s.site));
   const detail = site ? await siteDetail(site.id) : null;
   const active = connections.filter((c) => !c.revokedAt);
   const base = `/clients/${client.id}`;
-  const visibleActivity = team ? activity : activity.filter((a) => a.action.startsWith("fix.") || a.action.startsWith("run."));
   const waiting = team ? pendingFixes : pendingFixes.filter((p) => p.status === "proposed");
 
   if (!site || !detail) {
@@ -56,7 +60,7 @@ export default async function ClientOverview({ params, searchParams }: { params:
         <Card>
           <EmptyState
             title={team ? "No site yet" : "Your site is being set up"}
-            body={team ? (active.length ? "The connected workspace returned no site. Use “Re-import” in Settings after adding one in Webflow, or choose the site when the workspace has several." : "Connect the client's Webflow workspace in Settings; the site is imported from it.") : "Beqi is connecting your Webflow site. Your first audit appears here once it has run."}
+            body={team ? (active.length ? "The connected workspace returned no site. Use “Re-import” in Settings, or choose the site when the workspace has several." : "Connect the client's Webflow workspace in Settings; the site is imported from it.") : "Beqi is connecting your Webflow site. Your first audit appears here once it has run."}
             action={
               team ? (
                 <Link href={`${base}/settings`} className={btnSecondary}>
@@ -72,23 +76,28 @@ export default async function ClientOverview({ params, searchParams }: { params:
 
   const { connection, runs, latest, previous, findings, stateByFp, proposals, metrics, stats, fixedPages, googleConnection } = detail;
   const db = await getDb();
-  const window = lastDays(30);
-  const progress = latest ? await clientProgress(db, client.id, window.since, window.until) : null;
-  let traffic: TrafficDelta | null = null;
+  const changes = latest ? await siteChanges(site.id, 1) : null;
+  const latestChanges = changes?.audits[0];
+  let traffic: Awaited<ReturnType<typeof statsSummary>> | null = null;
   if (site.gscProperty || site.ga4Property) {
     const x = await statsSummary(db, site.id);
-    if (x.hasData) traffic = { clicks: x.current.clicks, clicksBefore: x.previous.clicks, sessions: x.current.sessions, sessionsBefore: x.previous.sessions, aiSessions: x.current.aiSessions, aiSessionsBefore: x.previous.aiSessions };
+    if (x.hasData) traffic = x;
   }
   const running = runs.find((r) => r.status === "running" || r.status === "queued") ?? null;
   const history = runs.filter((r) => r.status === "complete").map((r) => r.scoreOverall).reverse().slice(-12);
   const severity = (SEVERITY_ORDER as string[]).includes(q.sev ?? "") ? (q.sev as Severity) : "all";
   const newFps = new Set(findings.filter((f) => stateByFp.get(f.fingerprint)?.firstSeenRunId === latest?.id).map((f) => f.fingerprint));
-  const openProposals = proposals.filter((p) => (team ? p.status === "proposed" || p.status === "client_approved" || p.status === "approved" || p.status === "applying" || p.status === "failed" : p.status === "proposed"));
-  const doneProposals = proposals.filter((p) => p.status === "applied" || p.status === "resolved" || p.status === "rejected" || (!team && (p.status === "client_approved" || p.status === "approved" || p.status === "applying"))).slice(0, 10);
   const counts = Object.fromEntries(SEVERITY_ORDER.map((s) => [s, findings.filter((f) => f.severity === s).length])) as Record<Severity, number>;
+  const delta = latest?.scoreOverall != null && previous?.scoreOverall != null ? latest.scoreOverall - previous.scoreOverall : null;
+  const scoreLine = latest ? (delta == null ? `First audit, ${fmtDay(latest.finishedAt)}` : delta === 0 ? `Unchanged since ${fmtDay(previous!.finishedAt)}` : `${delta > 0 ? "Up" : "Down"} ${Math.abs(delta)} since ${fmtDay(previous!.finishedAt)}`) : "No audit yet";
+  const fixedSince = latest?.summary?.resolvedFindings ?? 0;
+  const foundSince = latest?.summary?.newFindings ?? 0;
+  const pct = (now: number, before: number) => (before ? `${now >= before ? "Up" : "Down"} ${Math.abs(Math.round(((now - before) / before) * 100))}%` : null);
+  const aiNow = latest?.summary?.aiVisibility && latest.summary.aiVisibility.answers > 0 ? latest.summary.aiVisibility : null;
+  const quickWaiting = waiting.filter((p) => p.effort === "quick").length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <ClientNotices q={q} />
       {team && !connection && (
         <Notice tone="warn">
@@ -99,80 +108,151 @@ export default async function ClientOverview({ params, searchParams }: { params:
           to audit it.
         </Notice>
       )}
-      {team && connection && !latest && !running && (
-        <Notice tone="accent">
-          <strong>Ready for its first audit.</strong> Claude reviews up to {site.maxPages} pages through Webflow and the live site; expect 5–10 minutes. Nothing is changed on the site during an audit.
-        </Notice>
-      )}
 
-      <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
-        <Card className="flex items-center gap-5 px-6 py-5">
-          <ScoreRing score={latest?.scoreOverall} size="xl" />
-          <div className="space-y-1.5">
-            <div className="text-xs font-medium text-ink-3">Overall score</div>
-            <div>
-              <Delta now={latest?.scoreOverall} before={previous?.scoreOverall} /> <span className="text-xs text-ink-3">vs previous audit</span>
-            </div>
-            <div className="text-xs text-ink-3">
-              Last audit {latest ? timeAgo(latest.finishedAt) : "—"}
+      {/* 1. How is my site? */}
+      <section aria-labelledby="state" className="space-y-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-xs text-ink-3">
+              {latest ? `${latest.trigger === "publish" ? "Checked after a publish" : "Audited"} · ${fmtDate(latest.finishedAt)}` : connection ? "Ready for the first audit" : "Not connected yet"}
               {running && (
                 <>
-                  {" "}
-                  ·{" "}
-                  <Link href={`/runs/${running.id}`} className="text-accent hover:underline">
-                    <StatusPill status="running" /> one running
+                  {" · "}
+                  <Link href={`/runs/${running.id}`} className="text-accent underline">
+                    <StatusPill status="running" /> audit in progress
                   </Link>
                 </>
               )}
-            </div>
-            <div className="text-xs text-ink-3">Next {site.auditFrequency === "off" ? (team ? "manual only" : "on request") : `${FREQUENCY_LABELS[site.auditFrequency].toLowerCase()} · ${fmtDay(site.nextRunAt)}`}</div>
-            {history.length >= 2 && (
-              <div className="pt-1">
-                <Sparkline values={history} width={140} height={32} />
-              </div>
-            )}
+            </p>
+            <h1 id="state" className="mt-1 text-2xl font-semibold tracking-tight text-ink">
+              {headline(latest?.scoreOverall)}
+            </h1>
           </div>
-        </Card>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <StatTile label="Open findings" value={<span className="num">{findings.length}</span>} hint={latest ? `${counts.critical} critical · ${counts.high} high` : "no audit yet"} />
-          <StatTile label={team ? "Fixes to review" : "Waiting for your approval"} value={<span className="num">{waiting.length}</span>} hint={waiting.length ? (team ? "waiting for a decision" : "recommended by Beqi") : "nothing waiting"}>
+          {latest && previous && (
+            <Link href={`${base}/changes`} className="text-sm font-medium text-accent hover:underline">
+              What changed since {fmtDay(previous.finishedAt)} →
+            </Link>
+          )}
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card className="flex items-center gap-5 p-5">
+            <ScoreRing score={latest?.scoreOverall} size="xl" />
+            <div className="text-sm leading-relaxed">
+              <div className="font-semibold text-ink">Site score</div>
+              <div className="text-ink-2">out of 100</div>
+              <div className="mt-1 text-ink-3">{scoreLine}</div>
+              {history.length >= 2 && (
+                <div className="pt-1">
+                  <Sparkline values={history} width={120} height={26} title="Score over the last audits" />
+                </div>
+              )}
+            </div>
+          </Card>
+          <Card className="flex flex-col gap-1.5 p-5">
+            <div className="text-xs text-ink-3">Open issues</div>
+            <div className="text-3xl font-bold leading-none tracking-tight text-ink num">{findings.length}</div>
+            <div className="text-sm leading-relaxed text-ink-2">
+              {latest ? (
+                <>
+                  {fixedSince > 0 ? <span className="font-semibold text-good-text">{fixedSince} fixed</span> : "Nothing fixed"} and {foundSince} found since the last audit. {counts.critical ? `${counts.critical} critical.` : "None critical."}
+                </>
+              ) : (
+                "Appears after the first audit."
+              )}
+            </div>
+          </Card>
+          <Card className={`flex flex-col gap-1.5 p-5 ${waiting.length ? "border-accent/40 bg-accent/5" : ""}`}>
+            <div className="text-xs text-ink-3">{team ? "Fixes to review" : "Waiting for you"}</div>
+            <div className="text-3xl font-bold leading-none tracking-tight text-ink num">{waiting.length}</div>
+            <div className="text-sm leading-relaxed text-ink-2">
+              {waiting.length === 0 ? "Nothing waiting right now." : quickWaiting === waiting.length ? `${waiting.length === 1 ? "A small change" : "Small changes"} to approve. Each takes a minute to read.` : `${waiting.length === 1 ? "One change" : `${waiting.length} changes`} to approve${quickWaiting ? `, ${quickWaiting} quick` : ""}.`}
+            </div>
             {waiting.length > 0 && (
-              <Link href={`${base}/fixes`} className={`${btnSecondary} ${btnSm}`}>
-                Review
+              <Link href={`${base}/fixes`} className="mt-1 text-sm font-semibold text-accent hover:underline">
+                Review {waiting.length === 1 ? "it" : "them"} →
               </Link>
             )}
-          </StatTile>
-          <StatTile label="Audits" value={<span className="num">{runs.filter((r) => r.status === "complete").length}</span>} hint={latest ? `${latest.summary?.newFindings ?? 0} new · ${latest.summary?.resolvedFindings ?? 0} resolved last time` : "none yet"} />
-        </div>
-      </div>
-
-      {progress && <ProgressCard progress={progress} clientId={client.id} label="Last 30 days · scores then and now, what was fixed, what is waiting" audience={role} traffic={traffic} />}
-
-      <section aria-labelledby="areas" className="space-y-3">
-        <CardHeader
-          title="Findings"
-          count={findings.length}
-          description={latest ? `From the latest audit on ${fmtDate(latest.finishedAt)} · what to fix first, then every area with its score` : undefined}
-          actions={
-            latest && (
-              <div className="flex flex-wrap gap-1" role="group" aria-label="Filter by severity">
-                {(["all", ...SEVERITY_ORDER] as const).map((s) => (
-                  <Link
-                    key={s}
-                    href={s === "all" ? base : `${base}?sev=${s}`}
-                    className={`rounded-md px-2 py-0.5 text-xs font-medium ${severity === s ? "bg-ink text-surface" : "text-ink-2 hover:bg-surface-2"}`}
-                    aria-current={severity === s ? "true" : undefined}
-                  >
-                    {s === "all" ? "All" : `${s} ${counts[s] ? counts[s] : ""}`.trim()}
-                  </Link>
-                ))}
+          </Card>
+          {traffic ? (
+            <Card className="flex flex-col gap-1.5 p-5">
+              <div className="text-xs text-ink-3">Visits from Google, last 28 days</div>
+              <div className="text-3xl font-bold leading-none tracking-tight text-ink num">{traffic.current.clicks.toLocaleString("en-GB")}</div>
+              <div className="text-sm leading-relaxed text-ink-2">
+                {pct(traffic.current.clicks, traffic.previous.clicks) ? <span className={`font-semibold ${traffic.current.clicks >= traffic.previous.clicks ? "text-good-text" : "text-critical-text"}`}>{pct(traffic.current.clicks, traffic.previous.clicks)}</span> : "No comparison yet"} on the 28 days before.
+                {traffic.current.aiSessions ? ` ${traffic.current.aiSessions} visits came from AI assistants.` : ""}
               </div>
-            )
-          }
-        />
+            </Card>
+          ) : aiNow ? (
+            <Card className="flex flex-col gap-1.5 p-5">
+              <div className="text-xs text-ink-3">AI answers naming you</div>
+              <div className="text-3xl font-bold leading-none tracking-tight text-ink num">
+                {aiNow.mentioned}
+                <span className="text-base font-medium text-ink-3"> of {aiNow.answers}</span>
+              </div>
+              <div className="text-sm leading-relaxed text-ink-2">Monthly check of what assistants say about you. {aiNow.inaccuracies ? `${aiNow.inaccuracies} wrong claim${aiNow.inaccuracies === 1 ? "" : "s"} being fixed.` : "Nothing contradicted the site."}</div>
+            </Card>
+          ) : (
+            <Card className="flex flex-col gap-1.5 p-5">
+              <div className="text-xs text-ink-3">Pages checked</div>
+              <div className="text-3xl font-bold leading-none tracking-tight text-ink num">{latest?.summary?.inventory?.pages ?? latest?.summary?.pagesTotal ?? "–"}</div>
+              <div className="text-sm leading-relaxed text-ink-2">{latest?.summary?.inventory ? `${latest.summary.inventory.broken ? `${latest.summary.inventory.broken} broken` : "All load"}, ${latest.summary.inventory.redirects} redirect, ${latest.summary.inventory.noindex} noindex.` : "Every page is fetched on each audit."}</div>
+            </Card>
+          )}
+        </div>
+      </section>
+
+      {/* 2. What changed since last time */}
+      {latestChanges && latestChanges.items.length > 0 && (
+        <section aria-labelledby="changed" className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 id="changed" className="text-lg font-semibold text-ink">
+              Since the last audit{latestChanges.previous ? `, ${fmtDay(latestChanges.previous.finishedAt)}` : ""}
+            </h2>
+            <Link href={`${base}/changes`} className="text-sm font-medium text-accent hover:underline">
+              All changes →
+            </Link>
+          </div>
+          <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
+            {latestChanges.items.slice(0, 5).map((it, i) => (
+              <li key={i} className="grid gap-1 px-5 py-3 text-sm sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-4">
+                <span className={`inline-flex items-center gap-2 text-xs font-semibold ${it.kind === "fixed" ? "text-good-text" : it.kind === "new" ? "text-warn-text" : "text-ink-2"}`}>
+                  <span aria-hidden className={`h-2 w-2 rounded-full ${it.kind === "fixed" ? "bg-good" : it.kind === "new" ? "bg-warn" : "bg-line-2"}`} />
+                  {it.kind === "fixed" ? "Fixed" : it.kind === "new" ? "New" : it.kind === "open" ? "Still open" : "Checked"}
+                </span>
+                <span className="text-ink">
+                  {it.title}
+                  {it.pagePath ? <span className="font-mono text-xs text-ink-3"> {it.pagePath}</span> : null}
+                  {it.detail && it.kind !== "new" ? <span className="text-ink-2"> · {it.detail}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* 3. What to do first */}
+      {latest && <FixFirst findings={findings} proposals={proposals} audience={role} />}
+
+      {/* 4. Every area */}
+      <section aria-labelledby="areas" className="space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 id="areas" className="text-lg font-semibold text-ink">
+            Every area
+          </h2>
+          {latest && (
+            <div className="flex flex-wrap gap-1" role="group" aria-label="Filter findings by severity">
+              {(["all", ...SEVERITY_ORDER] as const).map((s) => (
+                <Link key={s} href={s === "all" ? base : `${base}?sev=${s}`} className={`rounded-md px-2 py-0.5 text-xs font-medium ${severity === s ? "bg-ink text-surface" : "text-ink-2 hover:bg-surface-2"}`} aria-current={severity === s ? "true" : undefined}>
+                  {s === "all" ? "All" : `${s} ${counts[s] ? counts[s] : ""}`.trim()}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
         {latest ? (
           <>
-            <TopIssues findings={findings} proposals={proposals} baseUrl={site.baseUrl} audience={role} />
+            <AreaTable scores={latest.scores} previousScores={previous?.scores} findings={findings} audience={role} />
             <CategorySections
               scores={latest.scores}
               previousScores={previous?.scores}
@@ -200,17 +280,19 @@ export default async function ClientOverview({ params, searchParams }: { params:
       </section>
 
       {latest?.agentSummary && (
-        <Card>
-          <CardHeader
-            title={team ? "Claude's summary" : "Summary"}
-            description={`From the audit on ${fmtDate(latest.finishedAt)} · ${latest.summary?.pagesReviewed ?? 0} of ${latest.summary?.pagesTotal ?? 0} pages reviewed${team ? ` · ${fmtDuration(latest.usage?.durationMs)} · ${fmtCost(latest.usage?.estimatedCostUsd)}` : ""}`}
-            actions={
-              <Link href={`/runs/${latest.id}`} className="text-xs font-medium text-accent hover:underline">
-                Full report
+        <section aria-labelledby="summary" className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 id="summary" className="text-lg font-semibold text-ink">
+              {team ? "Claude's summary" : "In short"}
+            </h2>
+            <span className="text-xs text-ink-3">
+              {latest.summary?.pagesReviewed ?? 0} of {latest.summary?.pagesTotal ?? 0} pages read{team ? ` · ${fmtDuration(latest.usage?.durationMs)} · ${fmtCost(latest.usage?.estimatedCostUsd)}` : ""} ·{" "}
+              <Link href={`/runs/${latest.id}`} className="text-accent underline">
+                full report
               </Link>
-            }
-          />
-          <div className="grid gap-5 p-5 lg:grid-cols-[1fr_18rem]">
+            </span>
+          </div>
+          <Card className="grid gap-5 p-5 lg:grid-cols-[1fr_18rem]">
             <Markdown text={latest.agentSummary} />
             {latest.highlights && latest.highlights.length > 0 && (
               <div className="rounded-lg bg-surface-2 p-4">
@@ -227,131 +309,56 @@ export default async function ClientOverview({ params, searchParams }: { params:
                 </ul>
               </div>
             )}
-          </div>
-        </Card>
+          </Card>
+        </section>
       )}
 
-      <TrafficCard summary={stats} fixedPages={fixedPages} siteId={site.id} siteName={site.name} linked={!!(site.gscProperty || site.ga4Property)} googleConnected={!!googleConnection} audience={role} />
-
-      <Card id="fixes">
-        <CardHeader title={team ? "Proposed fixes" : "Recommended fixes"} count={openProposals.length} description={team ? "Nothing is written to Webflow until you approve it. Applied changes go live on the site's next publish." : "Nothing is changed until you approve it. Small, safe changes are applied right away; larger ones are applied by Beqi after your approval."} />
-        {openProposals.length === 0 ? (
-          <EmptyState title="No fixes waiting" body={latest ? (team ? "Claude found nothing it can safely fix automatically, or everything has been reviewed." : "Nothing is waiting for your approval right now.") : team ? "Run an audit to get fix proposals." : "Recommendations appear after the first audit."} />
-        ) : (
-          <ul className="divide-y divide-line">
-            {openProposals.map((p) => (
-              <ProposalRow key={p.id} proposal={p} back={`${base}#fixes`} role={role} />
-            ))}
-          </ul>
+      {/* 5. What it is doing for you */}
+      <section aria-labelledby="doing" className="space-y-3">
+        <h2 id="doing" className="text-lg font-semibold text-ink">
+          What it is doing for you
+        </h2>
+        <TrafficCard summary={stats} fixedPages={fixedPages} siteId={site.id} siteName={site.name} linked={!!(site.gscProperty || site.ga4Property)} googleConnected={!!googleConnection} audience={role} />
+        {aiNow && (
+          <Card className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm">
+            <span className="text-ink-2">
+              <span className="font-semibold text-ink">AI answers check:</span> assistants name you in {aiNow.mentioned} of {aiNow.answers} sampled answers, link to your site in {aiNow.cited}
+              {aiNow.inaccuracies ? `, and got ${aiNow.inaccuracies} fact${aiNow.inaccuracies === 1 ? "" : "s"} wrong` : ""}. Checked monthly; a direction, not a score.
+            </span>
+            <Link href={`${base}/ai`} className="font-medium text-accent hover:underline">
+              Every question, month by month →
+            </Link>
+          </Card>
         )}
-        {doneProposals.length > 0 && (
-          <details className="border-t border-line">
-            <summary className="px-5 py-2.5 text-xs font-medium text-ink-3 hover:text-ink">Recently applied or rejected ({doneProposals.length})</summary>
-            <ul className="divide-y divide-line border-t border-line">
-              {doneProposals.map((p) => (
-                <ProposalRow key={p.id} proposal={p} back={`${base}#fixes`} role={role} />
-              ))}
-            </ul>
-          </details>
-        )}
-      </Card>
+      </section>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader
-            title="Audit history"
-            count={runs.length}
-            actions={
-              <Link href={`${base}/audits`} className="text-xs font-medium text-accent hover:underline">
-                All audits
-              </Link>
-            }
-          />
-          {runs.length === 0 ? (
-            <EmptyState title="No audits yet" />
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5 text-sm text-ink-2">
+        <span>
+          {client.leadName ? (
+            <>
+              Your Beqi lead is <strong className="font-semibold text-ink">{client.leadName}</strong>
+              {client.leadEmail ? (
+                <>
+                  {" · "}
+                  <a href={`mailto:${client.leadEmail}`} className="text-accent underline">
+                    {client.leadEmail}
+                  </a>
+                </>
+              ) : null}
+            </>
           ) : (
-            <table className="data-table w-full text-sm">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Trigger</th>
-                  <th>Status</th>
-                  <th>Score</th>
-                  <th>Findings</th>
-                  {team && <th>Cost</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {runs.slice(0, 8).map((r) => (
-                  <tr key={r.id}>
-                    <td className="whitespace-nowrap">
-                      <Link href={`/runs/${r.id}`} className="text-ink hover:underline">
-                        {fmtDate(r.createdAt)}
-                      </Link>
-                    </td>
-                    <td className="text-ink-2">{triggerLabel(r.trigger)}</td>
-                    <td>
-                      <StatusPill status={r.status} />
-                    </td>
-                    <td className="num">{r.scoreOverall ?? "—"}</td>
-                    <td className="num text-ink-2">{r.summary ? Object.values(r.summary.findingsBySeverity).reduce((a, b) => a + b, 0) : "—"}</td>
-                    {team && <td className="num text-ink-2">{fmtCost(r.usage?.estimatedCostUsd)}</td>}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            "Looked after by Beqi"
           )}
-        </Card>
-        {team ? (
-          <Card>
-            <CardHeader title="Recent activity" />
-            {visibleActivity.length === 0 ? (
-              <EmptyState title="No activity yet" />
-            ) : (
-              <ul className="divide-y divide-line">
-                {visibleActivity.slice(0, 8).map((a) => (
-                  <li key={a.id} className="flex items-start justify-between gap-3 px-5 py-2.5 text-sm">
-                    <div className="min-w-0">
-                      <span className="font-medium text-ink">{humanAction(a.action)}</span>
-                      <span className="text-ink-3"> · {a.actor}</span>
-                    </div>
-                    <time className="shrink-0 text-xs text-ink-3" dateTime={a.createdAt}>
-                      {timeAgo(a.createdAt)}
-                    </time>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
-        ) : (
-          <Card>
-            <CardHeader title="How this works" />
-            <div className="space-y-2 p-5 text-sm text-ink-2">
-              <p>
-                Beqi audits your site {site.auditFrequency === "off" ? "on request" : FREQUENCY_LABELS[site.auditFrequency].toLowerCase()}
-                {site.auditOnPublish ? " and after each publish" : ""}, reviewing up to {site.maxPages} pages across {SCORED_CATEGORIES.length} areas. Nothing on the site is changed by an audit.
-              </p>
-              <p>Fixes are only applied after you approve them. Small, safe changes go in straight away; anything larger is applied by Beqi, and the next audit confirms it.</p>
-              {client.leadName && (
-                <p>
-                  Questions? Your Beqi lead is <span className="font-medium text-ink">{client.leadName}</span>
-                  {client.leadEmail ? (
-                    <>
-                      {" "}
-                      (
-                      <a href={`mailto:${client.leadEmail}`} className="text-accent hover:underline">
-                        {client.leadEmail}
-                      </a>
-                      )
-                    </>
-                  ) : null}
-                  .
-                </p>
-              )}
-            </div>
-          </Card>
-        )}
-      </div>
+        </span>
+        <span className="text-ink-3">
+          {site.auditFrequency === "off" ? (team ? "Audits run manually" : "Audits run on request") : `Audits ${FREQUENCY_LABELS[site.auditFrequency].toLowerCase()} · next ${fmtDay(site.nextRunAt)}`}
+          {latest && team ? ` · last ${timeAgo(latest.finishedAt)}` : ""}
+          {" · "}
+          <Link href={`${base}/audits`} className="text-accent underline">
+            all audits
+          </Link>
+        </span>
+      </footer>
     </div>
   );
 }

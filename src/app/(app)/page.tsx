@@ -1,53 +1,90 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireTeam } from "@/app/gate";
-import { dashboardData, pendingFixesAcrossPortfolio, recentActivity, recentRuns } from "@/lib/queries";
-import { ProposalRow } from "@/components/proposals";
-import { Card, CardHeader, CountPill, Delta, EmptyState, Notice, PageHeader, ScoreRing, Sparkline, StatTile, StatusPill, btnPrimary, btnSecondary, fmtDay, hostOf, timeAgo } from "@/components/ui";
-import { runNow } from "@/app/actions";
-import { humanAction } from "@/lib/activity";
-import { SubmitButton } from "@/components/submit-button";
+import { portfolioHome } from "@/lib/queries";
+import { Card, EmptyState, Notice, ScoreRing, StatusPill, btnPrimary, fmtCost, fmtDay, hostOf, timeAgo } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Portfolio" };
+export const metadata: Metadata = { title: "Clients" };
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+const TONE: Record<string, string> = { critical: "text-critical-text", warn: "text-warn-text", accent: "text-accent", neutral: "text-ink-2" };
+
+// The team's home: what needs the team today, one row per client sorted by
+// that, and the month in numbers.
+export default async function Home({ searchParams }: { searchParams: Promise<{ error?: string; deleted?: string }> }) {
   await requireTeam("/");
-  const { error } = await searchParams;
-  const [clients, pending, activity, runs] = await Promise.all([dashboardData(), pendingFixesAcrossPortfolio(), recentActivity(12), recentRuns(40)]);
-  const allSites = clients.flatMap((c) => c.sites);
-  const scored = allSites.filter((s) => s.latest?.scoreOverall != null);
-  const avg = scored.length ? Math.round(scored.reduce((a, s) => a + (s.latest!.scoreOverall ?? 0), 0) / scored.length) : null;
-  const prevAvg = scored.filter((s) => s.previous?.scoreOverall != null).length
-    ? Math.round(scored.filter((s) => s.previous?.scoreOverall != null).reduce((a, s) => a + (s.previous!.scoreOverall ?? 0), 0) / scored.filter((s) => s.previous?.scoreOverall != null).length)
-    : null;
-  const critical = allSites.reduce((a, s) => a + s.openBySeverity.critical, 0);
-  const high = allSites.reduce((a, s) => a + s.openBySeverity.high, 0);
-  const weekAgo = sinceDays(7);
-  const runsThisWeek = runs.filter((r) => new Date(r.createdAt).getTime() > weekAgo && r.status === "complete").length;
-  const needsAttention = allSites
-    .filter((s) => s.latest && (s.openBySeverity.critical > 0 || (s.latest.scoreOverall ?? 100) < 70))
-    .sort((a, b) => (a.latest?.scoreOverall ?? 0) - (b.latest?.scoreOverall ?? 0))
-    .slice(0, 6);
+  const { error, deleted } = await searchParams;
+  const { rows, today, month } = await portfolioHome();
+  const monthName = new Date().toLocaleString("en-GB", { month: "long", timeZone: "UTC" });
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Portfolio"
-        description={`${clients.length} client${clients.length === 1 ? "" : "s"} under care`}
-        actions={
-          <Link href="/clients/new" className={btnPrimary}>
-            Add client
-          </Link>
-        }
-      />
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">Clients</h1>
+          <p className="mt-1 text-sm text-ink-2">
+            {rows.length === 0 ? "No clients yet." : `${rows.length} site${rows.length === 1 ? "" : "s"} under care. Sorted by what needs you first.`}
+          </p>
+        </div>
+        <Link href="/clients/new" className={btnPrimary}>
+          Add client
+        </Link>
+      </div>
+      {error && <Notice tone="critical">{decodeURIComponent(error)}</Notice>}
+      {deleted && <Notice tone="good">Deleted “{deleted}” and all of its audit history.</Notice>}
 
-      {error && <Notice tone="critical">{error}</Notice>}
+      {rows.length > 0 && (
+        <section aria-label="What needs the team today" className="grid gap-4 sm:grid-cols-3">
+          <Card className={`p-5 ${today.toApply ? "border-accent/40 bg-accent/5" : ""}`}>
+            <div className="text-xs text-ink-3">Approved, for Beqi to apply</div>
+            <div className="mt-1 text-3xl font-bold leading-none tracking-tight text-ink num">{today.toApply}</div>
+            <div className="mt-1.5 text-sm text-ink-2">
+              {today.toApply ? (
+                <>
+                  {today.toApplyByClient.map((c) => `${c.name} ${c.n}`).join(" · ")}
+                  {today.toApplyOldestDays != null && today.toApplyOldestDays >= 1 ? ` · oldest ${today.toApplyOldestDays} day${today.toApplyOldestDays === 1 ? "" : "s"}` : ""}
+                </>
+              ) : (
+                "Nothing waiting on us"
+              )}
+            </div>
+            {today.toApply > 0 && (
+              <Link href="/fixes" className="mt-2 inline-block text-sm font-semibold text-accent hover:underline">
+                Apply them →
+              </Link>
+            )}
+          </Card>
+          <Card className="p-5">
+            <div className="text-xs text-ink-3">Waiting on clients</div>
+            <div className="mt-1 text-3xl font-bold leading-none tracking-tight text-ink num">{today.waitingOnClients}</div>
+            <div className="mt-1.5 text-sm text-ink-2">{today.waitingLongest ? `${today.waitingLongest.name} has had one open for ${today.waitingLongest.days} day${today.waitingLongest.days === 1 ? "" : "s"}${today.waitingLongest.days >= 7 ? "; worth a nudge" : ""}` : "Nothing waiting on a client"}</div>
+          </Card>
+          <Card className="p-5">
+            <div className="text-xs text-ink-3">Needs a person</div>
+            <div className={`mt-1 text-3xl font-bold leading-none tracking-tight num ${today.needsPerson.length ? "text-critical-text" : "text-ink"}`}>{today.needsPerson.length}</div>
+            <div className="mt-1.5 text-sm text-ink-2">
+              {today.needsPerson.length ? (
+                today.needsPerson.slice(0, 2).map((n, i) => (
+                  <span key={n.name}>
+                    {i > 0 ? " · " : ""}
+                    <Link href={n.href} className="text-accent hover:underline">
+                      {n.name}
+                    </Link>
+                    : {n.why.toLowerCase()}
+                  </span>
+                ))
+              ) : (
+                "Every site connected and audited"
+              )}
+            </div>
+          </Card>
+        </section>
+      )}
 
-      {allSites.length === 0 ? (
+      {rows.length === 0 ? (
         <Card>
           <EmptyState
-            title="No sites yet"
+            title="No clients yet"
             body="Add a client, then connect their Webflow workspace; their site is imported from it."
             action={
               <Link href="/clients/new" className={btnPrimary}>
@@ -57,207 +94,82 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           />
         </Card>
       ) : (
-        <>
-          <div className="grid gap-4 md:grid-cols-[auto_1fr]">
-            <Card className="flex items-center gap-5 px-6 py-5">
-              <ScoreRing score={avg} size="xl" label={avg == null ? "No audits yet" : `Portfolio average score ${avg}`} />
-              <div>
-                <div className="text-xs font-medium text-ink-3">Average score</div>
-                <div className="mt-1 text-sm text-ink-2">
-                  Across {scored.length} audited site{scored.length === 1 ? "" : "s"}
-                </div>
-                <div className="mt-2">
-                  <Delta now={avg} before={prevAvg} /> <span className="text-xs text-ink-3">vs previous audits</span>
-                </div>
-              </div>
-            </Card>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <StatTile label="Critical issues open" value={<span className={critical ? "text-critical-text" : ""}>{critical}</span>} hint={`${high} high`} />
-              <StatTile label="Fixes awaiting review" value={pending.length} hint={pending.length ? "Approve to let Claude apply them" : "Nothing waiting"} />
-              <StatTile label="Audits this week" value={runsThisWeek} hint={`${runs.filter((r) => r.status === "running" || r.status === "queued").length} running now`} />
-            </div>
-          </div>
-
-          {needsAttention.length > 0 && (
-            <Card>
-              <CardHeader title="Needs attention" description="Critical findings or a score under 70 in the latest audit" />
-              <ul className="divide-y divide-line">
-                {needsAttention.map((s) => (
-                  <li key={s.site.id} className="flex items-center gap-4 px-5 py-3">
-                    <ScoreRing score={s.latest?.scoreOverall} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <Link href={`/clients/${s.site.clientId}`} className="text-sm font-medium text-ink hover:underline">
-                        {s.site.name}
-                      </Link>
-                      <div className="text-xs text-ink-3">{hostOf(s.site.baseUrl)}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      <CountPill n={s.openBySeverity.critical} tone="critical" label="critical" />
-                      <CountPill n={s.openBySeverity.high} tone="serious" label="high" />
-                      <CountPill n={s.pendingFixes} tone="warn" label="fixes" />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
-
-          {clients.map(({ client, sites, connected }) => (
-            <Card key={client.id}>
-              <CardHeader
-                title={client.name}
-                count={sites.length}
-                description={connected ? undefined : "Webflow workspace not connected"}
-                actions={
-                  <div className="flex gap-2">
-                    {!connected && (
-                      // A plain anchor: Next's <Link> would prefetch this route and start an OAuth flow.
-                      <a href={`/api/webflow/authorize?client=${client.id}`} className={`${btnSecondary} !py-1 !text-xs`}>
-                        Connect Webflow
-                      </a>
-                    )}
-                    <Link href={`/clients/${client.id}`} className={`${btnSecondary} !py-1 !text-xs`}>
-                      Open
+        <section aria-label="Clients" className="overflow-x-auto rounded-xl border border-line bg-surface">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-surface-2/60 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-3">
+                <th className="px-5 py-2.5 font-semibold">Client</th>
+                <th className="px-3 py-2.5 font-semibold">Score</th>
+                <th className="px-3 py-2.5 font-semibold">30 days</th>
+                <th className="px-3 py-2.5 font-semibold">Needs</th>
+                <th className="px-3 py-2.5 font-semibold">Last audit</th>
+                <th className="px-5 py-2.5 font-semibold">Lead</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {rows.map((r) => (
+                <tr key={r.client.id} className="hover:bg-surface-2/50">
+                  <td className="px-5 py-3">
+                    <Link href={`/clients/${r.client.id}`} className="font-semibold text-ink hover:underline">
+                      {r.client.name}
                     </Link>
-                  </div>
-                }
-              />
-              {sites.length === 0 ? (
-                <EmptyState title="No sites imported yet" body={connected ? "The workspace is connected but returned no sites." : "Connect the client's Webflow workspace to import its sites."} />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="data-table w-full text-sm">
-                    <thead>
-                      <tr>
-                        <th>Site</th>
-                        <th>Score</th>
-                        <th>Trend</th>
-                        <th>Open issues</th>
-                        <th>Fixes</th>
-                        <th>Last audit</th>
-                        <th>Next</th>
-                        <th />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sites.map((s) => (
-                        <tr key={s.site.id}>
-                          <td>
-                            <Link href={`/clients/${s.site.clientId}`} className="font-medium text-ink hover:underline">
-                              {s.site.name}
-                            </Link>
-                            <div className="text-xs text-ink-3">{hostOf(s.site.baseUrl)}</div>
-                          </td>
-                          <td>
-                            <div className="flex items-center gap-2">
-                              <ScoreRing score={s.latest?.scoreOverall} size="sm" />
-                              <Delta now={s.latest?.scoreOverall} before={s.previous?.scoreOverall} />
-                            </div>
-                          </td>
-                          <td>
-                            <Sparkline values={s.history} />
-                          </td>
-                          <td>
-                            {s.latest ? (
-                              <div className="flex flex-wrap gap-1">
-                                <CountPill n={s.openBySeverity.critical} tone="critical" label="critical" />
-                                <CountPill n={s.openBySeverity.high} tone="serious" label="high" />
-                                <CountPill n={s.openBySeverity.medium} tone="warn" label="medium" />
-                                {s.openFindings === 0 && <span className="text-xs text-good-text">Clean</span>}
-                              </div>
-                            ) : (
-                              <span className="text-xs text-ink-3">not audited</span>
-                            )}
-                          </td>
-                          <td>
-                            {s.pendingFixes ? (
-                              <Link href={`/clients/${client.id}/fixes`} className="text-xs font-medium text-accent hover:underline">
-                                {s.pendingFixes} to review
-                              </Link>
-                            ) : (
-                              <span className="text-xs text-ink-3">—</span>
-                            )}
-                          </td>
-                          <td className="whitespace-nowrap text-ink-2">
-                            {s.running ? (
-                              <Link href={`/runs/${s.running}`}>
-                                <StatusPill status="running" />
-                              </Link>
-                            ) : s.latest ? (
-                              timeAgo(s.latest.finishedAt)
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="whitespace-nowrap text-ink-2">{s.site.auditFrequency === "off" ? "manual" : fmtDay(s.site.nextRunAt)}</td>
-                          <td className="text-right">
-                            <form action={runNow}>
-                              <input type="hidden" name="siteId" value={s.site.id} />
-                              <SubmitButton className={`${s.latest ? btnSecondary : btnPrimary} !py-1 !text-xs`} disabled={!s.site.connectionId || !!s.running} pendingLabel="Starting…">
-                                {s.running ? "Running…" : s.latest ? "Audit now" : "Run first audit"}
-                              </SubmitButton>
-                            </form>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
-          ))}
+                    <div className="text-xs text-ink-3">{r.site ? hostOf(r.site.baseUrl) : "no site yet"}</div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <ScoreRing score={r.score} size="sm" />
+                      <span className="font-semibold num">{r.score ?? "–"}</span>
+                    </div>
+                  </td>
+                  <td className={`whitespace-nowrap px-3 py-3 text-xs font-semibold num ${r.delta30 == null || r.delta30 === 0 ? "text-ink-3" : r.delta30 > 0 ? "text-up" : "text-critical-text"}`}>{r.delta30 == null ? "—" : r.delta30 === 0 ? "±0" : `${r.delta30 > 0 ? "+" : "−"}${Math.abs(r.delta30)}`}</td>
+                  <td className="px-3 py-3">
+                    <Link href={r.need.href} className={`font-semibold hover:underline ${TONE[r.need.tone]}`}>
+                      {r.need.label}
+                    </Link>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-3 text-ink-2">
+                    {r.running ? <StatusPill status="running" /> : r.lastAudit ? timeAgo(r.lastAudit) : "never"}
+                    <span className="text-ink-3"> · {r.auditsOff ? "manual" : `next ${fmtDay(r.nextRunAt)}`}</span>
+                  </td>
+                  <td className="px-5 py-3 text-ink-2">{r.lead ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card>
-              <CardHeader
-                title="Fixes awaiting review"
-                count={pending.length}
-                actions={
-                  <Link href="/fixes" className="text-xs font-medium text-accent hover:underline">
-                    All clients&apos; fixes
-                  </Link>
-                }
-              />
-              {pending.length === 0 ? (
-                <EmptyState title="Nothing to review" body="Claude proposes fixes during audits; they appear here until you approve or reject them." />
-              ) : (
-                <ul className="divide-y divide-line">
-                  {pending.slice(0, 4).map((p) => (
-                    <ProposalRow key={p.id} proposal={p} site={p.site} back="/" compact />
-                  ))}
-                </ul>
-              )}
+      {rows.length > 0 && (
+        <section aria-labelledby="month" className="space-y-3">
+          <h2 id="month" className="text-lg font-semibold text-ink">
+            {monthName} across all clients
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="p-5">
+              <div className="text-xs text-ink-3">Fixes applied</div>
+              <div className="mt-1 text-2xl font-semibold leading-none text-good-text num">{month.applied}</div>
+              <div className="mt-1.5 text-xs text-ink-2">{month.appliedByClients} approved by clients, {month.applied - month.appliedByClients} by Beqi</div>
             </Card>
-            <Card>
-              <CardHeader title="Recent activity" />
-              {activity.length === 0 ? (
-                <EmptyState title="No activity yet" />
-              ) : (
-                <ul className="divide-y divide-line">
-                  {activity.map((a) => (
-                    <li key={a.id} className="flex items-start justify-between gap-3 px-5 py-2.5 text-sm">
-                      <div className="min-w-0">
-                        <span className="font-medium text-ink">{humanAction(a.action)}</span>
-                        <span className="text-ink-3"> · {a.actor}</span>
-                      </div>
-                      <time className="shrink-0 text-xs text-ink-3" dateTime={a.createdAt}>
-                        {timeAgo(a.createdAt)}
-                      </time>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <Card className="p-5">
+              <div className="text-xs text-ink-3">Issues resolved</div>
+              <div className="mt-1 text-2xl font-semibold leading-none text-ink num">{month.resolved}</div>
+              <div className="mt-1.5 text-xs text-ink-2">{month.found} new found in the same month</div>
+            </Card>
+            <Card className="p-5">
+              <div className="text-xs text-ink-3">Audits run</div>
+              <div className="mt-1 text-2xl font-semibold leading-none text-ink num">{month.audits}</div>
+              <div className="mt-1.5 text-xs text-ink-2">{fmtCost(month.costUsd)} in model cost</div>
+            </Card>
+            <Card className="p-5">
+              <div className="text-xs text-ink-3">Monthly reports</div>
+              <div className="mt-1 text-2xl font-semibold leading-none text-ink num">
+                {month.reportsSent} of {month.clients}
+              </div>
+              <div className="mt-1.5 text-xs text-ink-2">sent on the 1st by email and Slack</div>
             </Card>
           </div>
-        </>
+        </section>
       )}
     </div>
   );
 }
-
-// Kept outside the component so the render stays pure for the lint rule; the
-// page is force-dynamic, so a fresh timestamp per request is what we want.
-function sinceDays(days: number): number {
-  return Date.now() - days * 86400_000;
-}
-

@@ -34,7 +34,7 @@ export default async function FixPage({ params }: { params: Promise<{ id: string
 
   return (
     <div className="space-y-6">
-      <Crumbs items={[...(team ? [{ href: "/clients", label: "Clients" }] : []), { href: `/clients/${site.clientId}`, label: clientName }, { href: `/clients/${site.clientId}/fixes`, label: "Fixes" }, { label: proposal.title ?? actionLabel(proposal.action) }]} />
+      <Crumbs items={[...(team ? [{ href: "/", label: "Clients" }] : []), { href: `/clients/${site.clientId}`, label: clientName }, { href: `/clients/${site.clientId}/fixes`, label: "Fixes" }, { label: proposal.title ?? actionLabel(proposal.action) }]} />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-2">

@@ -28,6 +28,7 @@ export default async function ClientAudits({ params, searchParams }: { params: P
 
   return (
     <div className="space-y-6">
+      <h1 className="sr-only">{client.name} · Audits</h1>
       <ClientNotices q={q} />
       <Card>
         <CardHeader

@@ -107,7 +107,7 @@ export default async function RunPage({ params, searchParams }: { params: Promis
   );
   return (
     <div className="space-y-6">
-      <Crumbs items={[...(team ? [{ href: "/clients", label: "Clients" }] : []), ...(client ? [{ href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/audits`, label: "Audits" }] : []), { label: `${site.name} · ${fmtDate(run.createdAt)}` }]} />
+      <Crumbs items={[...(team ? [{ href: "/", label: "Clients" }] : []), ...(client ? [{ href: `/clients/${client.id}`, label: client.name }, { href: `/clients/${client.id}/audits`, label: "Audits" }] : []), { label: `${site.name} · ${fmtDate(run.createdAt)}` }]} />
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-2">

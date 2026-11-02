@@ -3,40 +3,50 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const TEAM_ITEMS = [
-  { href: "/", label: "Portfolio", match: (p: string) => p === "/" },
-  { href: "/clients", label: "Clients", match: (p: string) => p.startsWith("/clients") || p.startsWith("/sites") || p.startsWith("/runs") || p.startsWith("/fixes") },
-  { href: "/team", label: "Team", match: (p: string) => p.startsWith("/team"), team: true },
-];
+interface Item {
+  href: string;
+  label: string;
+  match: (p: string) => boolean;
+  count?: number;
+}
 
-// A client user gets their own hub as the only destination; its tabs do the rest.
-function clientItems(clientId: string) {
-  const base = `/clients/${clientId}`;
+// The team's three destinations. "To apply" is the cross-client queue of
+// fixes a client or a team member approved and Beqi still has to apply.
+function teamItems(toApply: number): Item[] {
   return [
-    { href: base, label: "Overview", match: (p: string) => p === base },
-    { href: `${base}/audits`, label: "Audits", match: (p: string) => p.startsWith(`${base}/audits`) || p.startsWith("/runs") },
-    { href: `${base}/fixes`, label: "Fixes", match: (p: string) => p.startsWith(`${base}/fixes`) || p.startsWith("/fixes") },
-    { href: `${base}/ai`, label: "AI answers", match: (p: string) => p.startsWith(`${base}/ai`) },
+    { href: "/", label: "Clients", match: (p) => p === "/" || p.startsWith("/clients") || p.startsWith("/runs/") || p.startsWith("/fixes/") },
+    { href: "/fixes", label: "To apply", match: (p) => p === "/fixes", count: toApply },
+    { href: "/team", label: "Team", match: (p) => p.startsWith("/team") },
   ];
 }
 
-export function Nav({ pendingFixes, showTeam = true, clientId = null }: { pendingFixes: number; showTeam?: boolean; clientId?: string | null }) {
+// A client user's four destinations: the questions they come with.
+function clientItems(clientId: string, waiting: number): Item[] {
+  const base = `/clients/${clientId}`;
+  return [
+    { href: base, label: "Home", match: (p) => p === base || p.startsWith("/runs/") || p.startsWith(`${base}/audits`) },
+    { href: `${base}/changes`, label: "Changes", match: (p) => p.startsWith(`${base}/changes`) },
+    { href: `${base}/fixes`, label: "Fixes", match: (p) => p.startsWith(`${base}/fixes`) || p.startsWith("/fixes/"), count: waiting },
+    { href: `${base}/ai`, label: "AI answers", match: (p) => p.startsWith(`${base}/ai`) },
+  ];
+}
+
+export function Nav({ pendingFixes, clientId = null }: { pendingFixes: number; clientId?: string | null }) {
   const pathname = usePathname() ?? "/";
-  const items = clientId ? clientItems(clientId) : TEAM_ITEMS.filter((it) => !("team" in it) || !it.team || showTeam);
+  const items = clientId ? clientItems(clientId, pendingFixes) : teamItems(pendingFixes);
   return (
-    <nav aria-label="Primary" className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5">
+    <nav aria-label="Primary" className="flex gap-1 overflow-x-auto">
       {items.map((it) => {
         const active = it.match(pathname);
-        const showBadge = pendingFixes > 0 && it.label === "Fixes";
         return (
           <Link
             key={it.href}
             href={it.href}
             aria-current={active ? "page" : undefined}
-            className={`flex shrink-0 items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${active ? "bg-surface-2 text-ink" : "text-ink-2 hover:bg-surface-2 hover:text-ink"}`}
+            className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm transition-colors ${active ? "bg-surface-2 font-semibold text-ink" : "font-medium text-ink-2 hover:bg-surface-2 hover:text-ink"}`}
           >
             {it.label}
-            {showBadge && <span className="rounded-md px-1.5 text-[11px] font-semibold num tone-warn">{pendingFixes}</span>}
+            {it.count ? <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent-bg px-1.5 text-[12px] font-semibold text-accent-ink num">{it.count}</span> : null}
           </Link>
         );
       })}

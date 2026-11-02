@@ -22,9 +22,9 @@ const BASE = (process.argv[2] ?? "http://localhost:8787").replace(/\/$/, "");
 const TOKEN = process.argv[3] ?? "";
 const PAGES = [
   { path: "/", top: true },
-  { path: "/clients", top: true },
   { path: "/clients/new" },
   { path: "/clients/c_goldie", tabs: true },
+  { path: "/clients/c_goldie/changes", tabs: true },
   { path: "/clients/c_goldie/audits", tabs: true },
   { path: "/clients/c_goldie/fixes", tabs: true },
   { path: "/clients/c_goldie/ai", tabs: true },

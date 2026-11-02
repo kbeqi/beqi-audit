@@ -11,7 +11,7 @@ export default async function NewClientPage() {
   await requireTeam("/clients/new");
   return (
     <div className="max-w-lg space-y-4">
-      <Crumbs items={[{ href: "/clients", label: "Clients" }, { label: "Add client" }]} />
+      <Crumbs items={[{ href: "/", label: "Clients" }, { label: "Add client" }]} />
       <PageHeader title="Add client" description="Create the client, then connect their Webflow workspace. Sites are imported automatically." />
       <Card className="p-5">
         <form action={createClient} className="space-y-4">

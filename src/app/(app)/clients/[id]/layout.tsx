@@ -25,17 +25,17 @@ export default async function ClientLayout({ params, children }: { params: Promi
 
   return (
     <div className="space-y-5">
-      {team ? <Crumbs items={[{ href: "/clients", label: "Clients" }, { label: client.name }]} /> : null}
+      {team ? <Crumbs items={[{ href: "/", label: "Clients" }, { label: client.name }]} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           {logoUrl ? (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element -- served from KV, not a static asset */}
               <img src={logoUrl} alt={client.name} className="max-h-12 w-auto max-w-[240px] object-contain" />
-              <h1 className="sr-only">{client.name}</h1>
+              <span className="sr-only">{client.name}</span>
             </>
           ) : (
-            <h1 className="text-2xl font-semibold tracking-tight text-ink">{client.name}</h1>
+            <div className="text-2xl font-semibold tracking-tight text-ink">{client.name}</div>
           )}
           <div className="mt-1 text-sm text-ink-3">
             {h.siteHost ? (
@@ -69,7 +69,7 @@ export default async function ClientLayout({ params, children }: { params: Promi
           )}
         </div>
       </div>
-      <ClientTabs clientId={client.id} counts={{ audits: 0, pendingFixes, sites: siteCount, running: running.length > 0 }} showSettings={team} />
+      {team && <ClientTabs clientId={client.id} counts={{ audits: 0, pendingFixes, sites: siteCount, running: running.length > 0 }} showSettings />}
       {lostConnections > 0 &&
         (team ? (
           <Notice tone="serious">
